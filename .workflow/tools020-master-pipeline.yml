@@ -1,0 +1,73 @@
+# CI：推送 vX.Y.Z 的 Tag 自动构建
+# CD：构建成功后，在流水线里手动点击「发布 EdgeOne」阶段
+#
+# 重要：请在 Gitee 流水线页面点击「从代码库同步 YAML」，否则会沿用网页旧配置（npm ci + Node 19）
+
+version: '1.0'
+name: tools020-master-pipeline
+displayName: MasterPipeline
+
+variables:
+  EDGEONE_PROJECT_NAME: tools020-media-recorder
+
+triggers:
+  trigger: auto
+  push:
+    tags:
+      include:
+        - ^v[0-9]+\.[0-9]+\.[0-9]+$
+
+stages:
+  - name: stage-build
+    displayName: CI-构建
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      - step: build@nodejs
+        name: build_frontend
+        displayName: Nodejs 构建
+        nodeVersion: '20.18.0'
+        commands:
+          - bash scripts/ci-build.sh
+        artifacts:
+          - name: BUILD_ARTIFACT
+            path:
+              - ./dist
+        caches:
+          - ~/.npm
+        notify: []
+        strategy:
+          retry: '0'
+
+  - name: stage-deploy
+    displayName: CD-发布EdgeOne（手动）
+    strategy: naturally
+    trigger: manual
+    executor: []
+    steps:
+      - step: build@nodejs
+        name: deploy_edgeone
+        displayName: 发布到 EdgeOne
+        nodeVersion: '20.18.0'
+        commands:
+          - set -e
+          - |
+            if [ -n "$BUILD_ARTIFACT" ]; then
+              echo "使用构建制品: $BUILD_ARTIFACT"
+              curl -fsSL "$BUILD_ARTIFACT" -o /tmp/build-artifact.tar.gz
+              tar -xzf /tmp/build-artifact.tar.gz -C .
+            else
+              echo "未找到 BUILD_ARTIFACT，重新构建..."
+              bash scripts/ci-build.sh
+            fi
+          - test -f ./dist/index.html
+          - |
+            if [ -z "$EDGEONE_API_TOKEN" ]; then
+              echo "错误：请在流水线变量中配置 EDGEONE_API_TOKEN 后再手动发布"
+              exit 1
+            fi
+            npx edgeone@latest pages deploy ./dist -n $EDGEONE_PROJECT_NAME -t $EDGEONE_API_TOKEN -e production
+        notify: []
+        strategy:
+          retry: '0'

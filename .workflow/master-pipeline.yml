@@ -1,0 +1,71 @@
+# Gitee Go 默认识别的流水线文件名（与 tools020-master-pipeline.yml 内容一致）
+# 推送 vX.Y.Z Tag 触发；构建命令：bash scripts/ci-build.sh
+
+version: '1.0'
+name: master-pipeline
+displayName: MasterPipeline
+
+variables:
+  EDGEONE_PROJECT_NAME: tools020-media-recorder
+
+triggers:
+  trigger: auto
+  push:
+    tags:
+      include:
+        - ^v[0-9]+\.[0-9]+\.[0-9]+$
+
+stages:
+  - name: stage-build
+    displayName: CI-构建
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      - step: build@nodejs
+        name: build_frontend
+        displayName: Nodejs 构建
+        nodeVersion: '20.18.0'
+        commands:
+          - bash scripts/ci-build.sh
+        artifacts:
+          - name: BUILD_ARTIFACT
+            path:
+              - ./dist
+        caches:
+          - ~/.npm
+        notify: []
+        strategy:
+          retry: '0'
+
+  - name: stage-deploy
+    displayName: CD-发布EdgeOne（手动）
+    strategy: naturally
+    trigger: manual
+    executor: []
+    steps:
+      - step: build@nodejs
+        name: deploy_edgeone
+        displayName: 发布到 EdgeOne
+        nodeVersion: '20.18.0'
+        commands:
+          - set -e
+          - |
+            if [ -n "$BUILD_ARTIFACT" ]; then
+              echo "使用构建制品: $BUILD_ARTIFACT"
+              curl -fsSL "$BUILD_ARTIFACT" -o /tmp/build-artifact.tar.gz
+              tar -xzf /tmp/build-artifact.tar.gz -C .
+            else
+              echo "未找到 BUILD_ARTIFACT，重新构建..."
+              bash scripts/ci-build.sh
+            fi
+          - test -f ./dist/index.html
+          - |
+            if [ -z "$EDGEONE_API_TOKEN" ]; then
+              echo "错误：请在流水线变量中配置 EDGEONE_API_TOKEN 后再手动发布"
+              exit 1
+            fi
+            npx edgeone@latest pages deploy ./dist -n $EDGEONE_PROJECT_NAME -t $EDGEONE_API_TOKEN -e production
+        notify: []
+        strategy:
+          retry: '0'
