@@ -15,7 +15,7 @@ npm install --prefix client --no-audit --no-fund
 
 # 构建 client
 export NEXT_TELEMETRY_DISABLED=1
-npm run --prefix client run build
+npm run --prefix client build
 
 # 同步输出
 node scripts/sync-dist.mjs
