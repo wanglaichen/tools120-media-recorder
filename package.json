@@ -1,0 +1,25 @@
+{
+  "name": "tools020-media-recorder",
+  "private": true,
+  "version": "0.2.3",
+  "type": "module",
+  "scripts": {
+    "server:dev": "node server/index.mjs",
+    "client:dev": "npm --prefix client run dev",
+    "preclient:build": "node scripts/ensure-tailwind-native.mjs",
+    "client:build": "node scripts/build-with-node20.mjs && node scripts/sync-dist.mjs",
+    "build": "npm run client:build",
+    "ci:build": "bash scripts/ci-build.sh",
+    "client:preview": "npm --prefix client run preview",
+    "ci": "bash scripts/ci-build.sh && node --check server/index.mjs",
+    "deploy:edgeone": "npm run build && npx edgeone pages deploy ./dist -n tools020-media-recorder",
+    "dev": "npm run server:dev",
+    "github:build": "bash scripts/ci-github-build.sh",
+    "github:deploy": "npx edgeone@latest pages deploy ./dist -n $EDGEONE_PROJECT_NAME -t $EDGEONE_API_TOKEN -e production"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.2"
+  }
+}
