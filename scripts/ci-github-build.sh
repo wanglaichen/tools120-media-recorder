@@ -7,13 +7,11 @@ cd "$ROOT"
 
 echo "=== CI build with Node $(node -v) ==="
 
-npm config set registry https://registry.npmmirror.com
-
 # 安装根目录依赖
 npm install --no-audit --no-fund
 
-# 安装 client 依赖（不包含 optional，避免下载不存在的平台原生包）
-npm install --prefix client --no-audit --no-fund --ignore-scripts
+# 安装 client 依赖
+npm install --prefix client --no-audit --no-fund
 
 # 构建 client
 export NEXT_TELEMETRY_DISABLED=1
