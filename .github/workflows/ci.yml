@@ -115,13 +115,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: |
-            dist/**/*.html
-            dist/**/*.txt
-            dist/**/*.js
-            dist/**/*.css
-            dist/**/*.wasm
-            !dist/_next/**/*.js
+          files: dist/**/*.*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
