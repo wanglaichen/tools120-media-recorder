@@ -70,7 +70,7 @@ jobs:
 
     environment:
       name: production
-      url: https://${{ vars.EDGEONE_PROJECT_NAME || 'tools020-media-recorder' }}.edgeone.page
+      url: https://${{ vars.EDGEONE_PROJECT_NAME || 'tools120-media-recorder' }}.edgeone.page
 
     steps:
       - name: Setup Node.js
@@ -87,7 +87,7 @@ jobs:
       - name: Deploy to EdgeOne
         env:
           EDGEONE_API_TOKEN: ${{ secrets.EDGEONE_API_TOKEN }}
-          EDGEONE_PROJECT_NAME: ${{ vars.EDGEONE_PROJECT_NAME || 'tools020-media-recorder' }}
+          EDGEONE_PROJECT_NAME: ${{ vars.EDGEONE_PROJECT_NAME || 'tools120-media-recorder' }}
         run: |
           if [ -z "$EDGEONE_API_TOKEN" ]; then
             echo "错误：请在 GitHub Secrets 中配置 EDGEONE_API_TOKEN"
