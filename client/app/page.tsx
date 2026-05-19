@@ -23,6 +23,7 @@ import {
   Square,
   Trash2,
   UploadCloud,
+  Video,
   X,
 } from 'lucide-react';
 import {
@@ -39,6 +40,7 @@ import {
 import { RecordingList } from '@/components/RecordingList';
 import { RecordingPickerModal } from '@/components/RecordingPickerModal';
 import { ServiceInfoBar } from '@/components/ServiceInfoBar';
+import { VideoGen } from '@/components/VideoGen';
 import type { RecordingClip } from '@/types/recording';
 import type {
   AutomaticSpeechRecognitionOutput,
@@ -46,7 +48,7 @@ import type {
   ProgressInfo,
 } from '@huggingface/transformers';
 
-type PageKey = 'capture' | 'convert';
+type PageKey = 'capture' | 'convert' | 'video';
 type RecorderStatus = 'idle' | 'requesting' | 'ready' | 'recording' | 'paused' | 'stopped' | 'error';
 type UploadStatus = 'idle' | 'uploading' | 'success' | 'error';
 type TranscriptionStatus = 'idle' | 'loading-model' | 'transcribing' | 'success' | 'error';
@@ -257,6 +259,7 @@ export default function HomePage() {
     () => [
       { key: 'capture' as const, label: '音频采集', detail: '麦克风录音', icon: Mic },
       { key: 'convert' as const, label: '音频转换', detail: 'Whisper 转写', icon: Languages },
+      { key: 'video' as const, label: '文字转视频', detail: 'MiniMax AI', icon: Video },
     ],
     [],
   );
@@ -1269,7 +1272,9 @@ export default function HomePage() {
                 )}
               </section>
             </div>
-          )}
+          ) : activePage === 'video' ? (
+            <VideoGen />
+          ) : null}
         </div>
       </div>
 
