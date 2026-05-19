@@ -73,28 +73,40 @@ jobs:
       url: https://${{ vars.EDGEONE_PROJECT_NAME || 'tools120-media-recorder' }}.edgeone.page
 
     steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Download artifacts
+      - name: Download build artifact (CLI deploy only)
+        if: ${{ secrets.EDGEONE_DEPLOY_WEBHOOK_URL == '' }}
         uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
 
-      - name: Deploy to EdgeOne
+      # GitHub/GitLab/Gitee 关联项目：用 Webhook 触发 EdgeOne 从仓库拉代码并构建
+      - name: Trigger EdgeOne deploy (Webhook)
+        if: ${{ secrets.EDGEONE_DEPLOY_WEBHOOK_URL != '' }}
+        env:
+          EDGEONE_DEPLOY_WEBHOOK_URL: ${{ secrets.EDGEONE_DEPLOY_WEBHOOK_URL }}
+        run: |
+          echo "通过 Webhook 触发 EdgeOne 部署（从 GitHub 仓库构建）..."
+          curl -fsSL -X POST "$EDGEONE_DEPLOY_WEBHOOK_URL"
+          echo "Webhook 已调用，请在 EdgeOne 控制台查看部署进度"
+
+      # Upload 类型项目：用 CLI 上传 dist（需在控制台选「直接上传」创建项目）
+      - name: Deploy dist via EdgeOne CLI
+        if: ${{ secrets.EDGEONE_DEPLOY_WEBHOOK_URL == '' }}
         env:
           EDGEONE_API_TOKEN: ${{ secrets.EDGEONE_API_TOKEN }}
           EDGEONE_PROJECT_NAME: ${{ vars.EDGEONE_PROJECT_NAME || 'tools120-media-recorder' }}
         run: |
           if [ -z "$EDGEONE_API_TOKEN" ]; then
-            echo "错误：请在 GitHub Secrets 中配置 EDGEONE_API_TOKEN"
+            echo "错误：请配置 EDGEONE_DEPLOY_WEBHOOK_URL（Git 关联项目）或 EDGEONE_API_TOKEN（直接上传项目）"
             exit 1
           fi
-          echo "部署到 EdgeOne 项目: $EDGEONE_PROJECT_NAME"
-          npx edgeone@latest pages deploy ./dist -n $EDGEONE_PROJECT_NAME -t $EDGEONE_API_TOKEN -e production
+          if [ ! -f ./dist/index.html ]; then
+            echo "错误：未找到 dist，请先完成 build job"
+            exit 1
+          fi
+          echo "CLI 上传到 EdgeOne 项目: $EDGEONE_PROJECT_NAME"
+          npx edgeone@latest pages deploy ./dist -n "$EDGEONE_PROJECT_NAME" -t "$EDGEONE_API_TOKEN" -e production
 
   release:
     name: Create Release
