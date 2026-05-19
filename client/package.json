@@ -6,8 +6,8 @@
     "node": ">=18.18.0"
   },
   "scripts": {
-    "dev": "next dev --turbopack",
-    "dev:no-turbopack": "next dev",
+    "dev": "next dev --turbopack -H 127.0.0.1 -p 5173",
+    "dev:no-turbopack": "next dev -H 127.0.0.1 -p 5173",
     "predev": "echo 'Starting development server...'",
     "prebuild": "echo 'Building...'",
     "build": "node ../scripts/build-with-node20.mjs",

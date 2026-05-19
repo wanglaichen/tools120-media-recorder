@@ -10,7 +10,14 @@ type HealthPayload = {
 export function ServiceInfoBar() {
   const apiEndpoint = resolveApiBase();
   const apiOrigin = resolveApiOrigin() || '（未配置）';
+  const [frontendOrigin, setFrontendOrigin] = useState('…');
   const [serverIp, setServerIp] = useState('…');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setFrontendOrigin(window.location.origin);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -32,6 +39,9 @@ export function ServiceInfoBar() {
   return (
     <div className="border-b border-border/50 bg-muted/20 px-4 py-1 text-[10px] leading-snug text-muted-foreground sm:px-6">
       <p className="truncate">
+        <span className="text-muted-foreground/80">前端</span>{' '}
+        <span className="font-mono text-[10px] text-foreground/70">{frontendOrigin}</span>
+        <span className="mx-1.5 text-border">·</span>
         <span className="text-muted-foreground/80">Server</span>{' '}
         <span className="font-mono text-[10px] text-foreground/70">{apiOrigin}</span>
         <span className="mx-1.5 text-border">·</span>

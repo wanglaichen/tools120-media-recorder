@@ -26,6 +26,12 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 Copy-EnvIfMissing -EnvPath $rootEnv -ExamplePath $rootEnvExample
 Copy-EnvIfMissing -EnvPath $clientEnv -ExamplePath $clientEnvExample
 
+$clientEnvLocal = Join-Path $clientDir ".env.local"
+if (-not (Test-Path -LiteralPath $clientEnvLocal) -and (Test-Path -LiteralPath $clientEnvExample)) {
+  Copy-Item -LiteralPath $clientEnvExample -Destination $clientEnvLocal
+  Write-Host "Created $clientEnvLocal"
+}
+
 if (-not (Test-Path -LiteralPath (Join-Path $root "node_modules"))) {
   Write-Host "Installing server dependencies..."
   npm install --prefix $root
@@ -36,9 +42,13 @@ if (-not (Test-Path -LiteralPath (Join-Path $clientDir "node_modules"))) {
   npm install --prefix $clientDir
 }
 
+$clientHost = "127.0.0.1"
 $clientPort = "5173"
 if (Test-Path $rootEnv) {
   $envContent = Get-Content $rootEnv -Raw
+  if ($envContent -match 'CLIENT_HOST=([^\r\n]+)') {
+    $clientHost = $matches[1].Trim()
+  }
   if ($envContent -match 'CLIENT_PORT=(\d+)') {
     $clientPort = $matches[1]
   }
@@ -56,6 +66,6 @@ Start-Process -FilePath "node" -ArgumentList "server/index.mjs" -WorkingDirector
 
 Start-Sleep -Seconds 2
 
-Write-Host "Starting Next.js client on port $clientPort..."
+Write-Host "Starting Next.js at http://${clientHost}:${clientPort} ..."
 Set-Location $clientDir
-npm run dev -- -p $clientPort
+npm run dev -- -H $clientHost -p $clientPort
