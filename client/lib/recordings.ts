@@ -45,11 +45,16 @@ export const resolveApiBase = (): string => {
   return trimSlash(endpoint || '/api/audio');
 };
 
-export const usesLocalRecordings = (): boolean =>
-  process.env.NODE_ENV === 'production' && !resolveApiBase().startsWith('http');
+export const usesLocalRecordings = (): boolean => {
+  if (process.env.NODE_ENV !== 'production') return false;
+  const base = resolveApiBase();
+  if (base.startsWith('http')) return false;
+  if (base.startsWith('/api')) return false;
+  return true;
+};
 
 const apiUnavailableMessage =
-  '线上未配置录音 API：请在 Gitee 流水线设置 NEXT_PUBLIC_API_BASE_URL 或 NEXT_PUBLIC_UPLOAD_ENDPOINT（完整 https 地址），并重新部署。当前已改用浏览器本地存储。';
+  '线上录音 API 不可用：请确认 EdgeOne 已部署 cloud-functions，并设置 NEXT_PUBLIC_API_BASE_URL 为站点根地址后重新构建。当前已改用浏览器本地存储。';
 
 const readResponseJson = async <T>(response: Response, bodyText?: string): Promise<T> => {
   const text = bodyText ?? (await response.text());

@@ -13,8 +13,9 @@ npm install --no-audit --no-fund
 # 安装 client 依赖
 npm install --prefix client --no-audit --no-fund
 
-# 构建 client
+# 构建 client（线上默认同源 API）
 export NEXT_TELEMETRY_DISABLED=1
+export NEXT_PUBLIC_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL:-https://tools120-media-recorder.edgeone.dev}"
 npm run --prefix client build
 
 # 同步输出

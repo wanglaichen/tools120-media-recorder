@@ -968,8 +968,8 @@ export default function HomePage() {
                   <div className="mb-4 flex flex-col gap-2">
                     {usesLocalRecordings() && (
                       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
-                        录音保存在本浏览器（IndexedDB），换设备不互通。若已部署 API，请在 Gitee 流水线配置
-                        NEXT_PUBLIC_API_BASE_URL 后重新发布。
+                        录音保存在本浏览器（IndexedDB），换设备不互通。若已部署 EdgeOne API，请设置
+                        NEXT_PUBLIC_API_BASE_URL 为站点根地址后重新发布。
                       </div>
                     )}
                     <div className="flex items-center justify-between gap-3">

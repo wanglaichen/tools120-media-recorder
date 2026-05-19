@@ -11,9 +11,8 @@ export npm_config_ignore_scripts=false
 
 node scripts/ensure-tailwind-native.mjs
 
-if [ -n "${NEXT_PUBLIC_API_BASE_URL:-}" ]; then
-  export NEXT_PUBLIC_API_BASE_URL
-fi
+export NEXT_PUBLIC_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL:-https://tools120-media-recorder.edgeone.dev}"
+echo "NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL"
 if [ -n "${NEXT_PUBLIC_UPLOAD_ENDPOINT:-}" ]; then
   export NEXT_PUBLIC_UPLOAD_ENDPOINT
 fi
