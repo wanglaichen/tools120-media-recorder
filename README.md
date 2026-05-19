@@ -140,24 +140,25 @@ git push origin v1.1.1
 
 **首次在 GitHub 启用（只做一次）：**
 
-**方式 A：Git 关联项目（推荐，你当前的 `tools120-media-recorder`）**
+任选一种部署方式（在仓库 **Settings → Variables** 设置 `EDGEONE_DEPLOY_MODE`）：
 
-1. EdgeOne 控制台 → 项目 `tools120-media-recorder` → **设置** → **Webhook** → 新建 Webhook，分支选 `main`
-2. 复制生成的 Webhook URL
-3. GitHub 仓库 **Settings → Secrets → Actions** → 新建 `EDGEONE_DEPLOY_WEBHOOK_URL`，粘贴上述 URL
-4. 打 Tag 推送后，Actions 会 `POST` 该 URL，EdgeOne 从 GitHub 拉代码并按 `edgeone.json` 构建部署
+**方式 A：`git`（默认，适合已关联 GitHub 的项目 `tools120-media-recorder`）**
 
-**方式 B：「直接上传」类型项目（CLI 上传 dist）**
+- EdgeOne 已绑定本仓库，生产分支设为 `main`
+- 打 Tag 后 CI 会向 `main` 推一次空提交，触发 EdgeOne **自动从 GitHub 拉代码**并按根目录 `edgeone.json` 构建
+- **不需要** Webhook，也**不能**对 Git 项目使用 `edgeone pages deploy` 上传 dist
 
-1. EdgeOne 创建项目时选 **直接上传**（不是导入 GitHub）
-2. GitHub Secrets 配置 `EDGEONE_API_TOKEN`
-3. 可选变量 `EDGEONE_PROJECT_NAME`
+**方式 B：`upload`（须单独建「直接上传」项目）**
 
-**GitHub Actions Secrets：**
+1. EdgeOne 控制台 → 创建项目 → 选 **直接上传**（不要选导入 GitHub）
+2. 记下项目名，在 GitHub 设置：
+   - Variable `EDGEONE_DEPLOY_MODE` = `upload`
+   - Variable `EDGEONE_UPLOAD_PROJECT_NAME` = 直接上传项目名
+   - Secret `EDGEONE_API_TOKEN` = API Token
+3. 打 Tag 后 CI 用 CLI 上传 GitHub Actions 构建好的 `dist`
 
-| 密钥 | 方式 | 说明 |
-|------|------|------|
-| `EDGEONE_DEPLOY_WEBHOOK_URL` | A（Git 项目） | EdgeOne 项目设置里创建的 Webhook 完整 URL |
-| `EDGEONE_API_TOKEN` | B（直接上传） | EdgeOne API Token，用于 `edgeone pages deploy` |
-
-配置了 Webhook 时优先走方式 A；未配置 Webhook 时走方式 B。
+| 配置项 | 方式 A (git) | 方式 B (upload) |
+|--------|--------------|-----------------|
+| `EDGEONE_DEPLOY_MODE` | `git`（可省略） | `upload` |
+| `EDGEONE_UPLOAD_PROJECT_NAME` | — | 直接上传项目名 |
+| `EDGEONE_API_TOKEN` | — | 必填 |

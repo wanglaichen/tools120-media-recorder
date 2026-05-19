@@ -1,5 +1,5 @@
 {
-  "name": "tools020-media-recorder",
+  "name": "tools120-media-recorder",
   "nodeVersion": "20.18.0",
   "installCommand": "npm install && npm install --prefix client --include=optional && node scripts/ensure-tailwind-native.mjs",
   "buildCommand": "bash scripts/edgeone-build.sh",

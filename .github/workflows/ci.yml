@@ -14,6 +14,9 @@ env:
   NODE_VERSION: '20.18.0'
   NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
   NEXT_PUBLIC_UPLOAD_ENDPOINT: ${{ vars.NEXT_PUBLIC_UPLOAD_ENDPOINT }}
+  # git = 推 main 触发 EdgeOne 自动构建（GitHub 关联项目）
+  # upload = CLI 上传 dist（须用「直接上传」创建的项目，不能与 Git 项目同名混用）
+  EDGEONE_DEPLOY_MODE: ${{ vars.EDGEONE_DEPLOY_MODE || 'git' }}
 
 jobs:
   build:
@@ -67,46 +70,52 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
 
     environment:
       name: production
       url: https://${{ vars.EDGEONE_PROJECT_NAME || 'tools120-media-recorder' }}.edgeone.page
 
     steps:
-      - name: Download build artifact (CLI deploy only)
-        if: ${{ secrets.EDGEONE_DEPLOY_WEBHOOK_URL == '' }}
+      # 方式 upload：「直接上传」类型项目 + CLI（见 README）
+      - name: Download dist
+        if: env.EDGEONE_DEPLOY_MODE == 'upload'
         uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
 
-      # GitHub/GitLab/Gitee 关联项目：用 Webhook 触发 EdgeOne 从仓库拉代码并构建
-      - name: Trigger EdgeOne deploy (Webhook)
-        if: ${{ secrets.EDGEONE_DEPLOY_WEBHOOK_URL != '' }}
-        env:
-          EDGEONE_DEPLOY_WEBHOOK_URL: ${{ secrets.EDGEONE_DEPLOY_WEBHOOK_URL }}
-        run: |
-          echo "通过 Webhook 触发 EdgeOne 部署（从 GitHub 仓库构建）..."
-          curl -fsSL -X POST "$EDGEONE_DEPLOY_WEBHOOK_URL"
-          echo "Webhook 已调用，请在 EdgeOne 控制台查看部署进度"
-
-      # Upload 类型项目：用 CLI 上传 dist（需在控制台选「直接上传」创建项目）
       - name: Deploy dist via EdgeOne CLI
-        if: ${{ secrets.EDGEONE_DEPLOY_WEBHOOK_URL == '' }}
+        if: env.EDGEONE_DEPLOY_MODE == 'upload'
         env:
           EDGEONE_API_TOKEN: ${{ secrets.EDGEONE_API_TOKEN }}
-          EDGEONE_PROJECT_NAME: ${{ vars.EDGEONE_PROJECT_NAME || 'tools120-media-recorder' }}
+          EDGEONE_PROJECT_NAME: ${{ vars.EDGEONE_UPLOAD_PROJECT_NAME }}
         run: |
           if [ -z "$EDGEONE_API_TOKEN" ]; then
-            echo "错误：请配置 EDGEONE_DEPLOY_WEBHOOK_URL（Git 关联项目）或 EDGEONE_API_TOKEN（直接上传项目）"
+            echo "请配置 EDGEONE_API_TOKEN，并创建「直接上传」类型项目"
             exit 1
           fi
-          if [ ! -f ./dist/index.html ]; then
-            echo "错误：未找到 dist，请先完成 build job"
+          if [ -z "$EDGEONE_PROJECT_NAME" ]; then
+            echo "请配置仓库变量 EDGEONE_UPLOAD_PROJECT_NAME（直接上传项目的名称）"
             exit 1
           fi
-          echo "CLI 上传到 EdgeOne 项目: $EDGEONE_PROJECT_NAME"
+          test -f ./dist/index.html
+          echo "CLI 上传到: $EDGEONE_PROJECT_NAME"
           npx edgeone@latest pages deploy ./dist -n "$EDGEONE_PROJECT_NAME" -t "$EDGEONE_API_TOKEN" -e production
+
+      # 方式 git：GitHub 关联项目，推 main 触发 EdgeOne 按 edgeone.json 构建
+      - name: Trigger EdgeOne Git deploy
+        if: env.EDGEONE_DEPLOY_MODE == 'git'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          git pull origin main
+          git commit --allow-empty -m "ci: trigger EdgeOne deploy for ${{ github.ref_name }}"
+          git push origin main
+          echo "已推送 main，EdgeOne 将自动拉取仓库并构建（请确认生产分支为 main）"
 
   release:
     name: Create Release
@@ -117,18 +126,9 @@ jobs:
       contents: write
 
     steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist
-
       - name: Create Release
         uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: |
-            dist/
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
