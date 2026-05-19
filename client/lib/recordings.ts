@@ -27,6 +27,21 @@ export type RecordingsManifest = {
 
 const trimSlash = (value: string) => value.replace(/\/$/, '');
 
+/** API 服务根地址（用于展示、健康检查） */
+export const resolveApiOrigin = (): string => {
+  const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (apiOrigin?.startsWith('http://') || apiOrigin?.startsWith('https://')) {
+    return trimSlash(apiOrigin);
+  }
+  if (typeof window !== 'undefined') return window.location.origin;
+  return '';
+};
+
+export const resolveHealthUrl = (): string => {
+  const origin = resolveApiOrigin();
+  return origin ? `${origin}/api/health` : '/api/health';
+};
+
 /** 生产构建需为完整 URL；开发可用 /api/audio */
 export const resolveApiBase = (): string => {
   const endpoint = process.env.NEXT_PUBLIC_UPLOAD_ENDPOINT?.trim();

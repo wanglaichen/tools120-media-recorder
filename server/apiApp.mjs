@@ -12,6 +12,19 @@ const defaultManifest = () => ({
 
 const sanitizeId = (id) => /^[a-zA-Z0-9_-]+$/.test(id);
 
+const getClientIp = (req) => {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    return forwarded.split(',')[0].trim();
+  }
+  if (Array.isArray(forwarded) && forwarded[0]) {
+    return String(forwarded[0]).trim();
+  }
+  const realIp = req.headers['x-real-ip'];
+  if (typeof realIp === 'string' && realIp.trim()) return realIp.trim();
+  return req.socket?.remoteAddress || '-';
+};
+
 /** @param {{ storage: 'disk', uploadDir: string, manifestPath: string, maxAudioMb: number } | { storage: 'memory', maxAudioMb: number }} opts */
 export function createApiApp(opts) {
   const maxAudioMb = opts.maxAudioMb ?? 25;
@@ -129,8 +142,13 @@ export function createApiApp(opts) {
 
   const router = express.Router();
 
-  router.get('/health', (_req, res) => {
-    res.json({ ok: true, storage: opts.storage });
+  router.get('/health', (req, res) => {
+    res.json({
+      ok: true,
+      storage: opts.storage,
+      clientIp: getClientIp(req),
+      host: req.headers.host || null,
+    });
   });
 
   router.get('/audio', (_req, res) => {
