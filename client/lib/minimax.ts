@@ -3,6 +3,8 @@
  * 文档: https://platform.minimaxi.com/docs/guides/video-generation
  */
 
+const BASE_URL = process.env.NEXT_PUBLIC_MINIMAX_API_BASE_URL || 'https://api.minimaxi.com';
+
 export type VideoModel = 'MiniMax-Hailuo-2.3' | 'MiniMax-Hailuo-02' | 'S2V-01';
 
 export type VideoMode = 'text-to-video' | 'image-to-video' | 'start-end' | 'subject-reference';
@@ -38,7 +40,7 @@ export async function createVideoTask(params: VideoCreateParams): Promise<string
   const apiKey = process.env.NEXT_PUBLIC_MINIMAX_API_KEY;
   if (!apiKey) throw new Error('请先在环境变量中配置 NEXT_PUBLIC_MINIMAX_API_KEY');
 
-  const url = 'https://api.minimaxi.com/v1/video_generation';
+  const url = `${BASE_URL}/v1/video_generation`;
   const payload: Record<string, unknown> = {
     model: params.model,
     prompt: params.prompt,
@@ -53,7 +55,7 @@ export async function createVideoTask(params: VideoCreateParams): Promise<string
   const response = await fetch(url, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload),
@@ -64,7 +66,7 @@ export async function createVideoTask(params: VideoCreateParams): Promise<string
     throw new Error(`视频任务创建失败 (${response.status}): ${text}`);
   }
 
-  const data = await response.json() as { task_id: string };
+  const data = (await response.json()) as { task_id: string };
   return data.task_id;
 }
 
@@ -73,9 +75,9 @@ export async function queryVideoTaskStatus(taskId: string): Promise<VideoStatus>
   const apiKey = process.env.NEXT_PUBLIC_MINIMAX_API_KEY;
   if (!apiKey) throw new Error('请先在环境变量中配置 NEXT_PUBLIC_MINIMAX_API_KEY');
 
-  const url = `https://api.minimaxi.com/v1/query/video_generation?task_id=${encodeURIComponent(taskId)}`;
+  const url = `${BASE_URL}/v1/query/video_generation?task_id=${encodeURIComponent(taskId)}`;
   const response = await fetch(url, {
-    headers: { 'Authorization': `Bearer ${apiKey}` },
+    headers: { Authorization: `Bearer ${apiKey}` },
   });
 
   if (!response.ok) {
@@ -83,7 +85,7 @@ export async function queryVideoTaskStatus(taskId: string): Promise<VideoStatus>
     throw new Error(`任务状态查询失败 (${response.status}): ${text}`);
   }
 
-  const data = await response.json() as VideoStatus;
+  const data = (await response.json()) as VideoStatus;
   return data;
 }
 
@@ -92,9 +94,9 @@ export async function fetchVideoDownloadUrl(fileId: string): Promise<string> {
   const apiKey = process.env.NEXT_PUBLIC_MINIMAX_API_KEY;
   if (!apiKey) throw new Error('请先在环境变量中配置 NEXT_PUBLIC_MINIMAX_API_KEY');
 
-  const url = `https://api.minimaxi.com/v1/files/retrieve?file_id=${encodeURIComponent(fileId)}`;
+  const url = `${BASE_URL}/v1/files/retrieve?file_id=${encodeURIComponent(fileId)}`;
   const response = await fetch(url, {
-    headers: { 'Authorization': `Bearer ${apiKey}` },
+    headers: { Authorization: `Bearer ${apiKey}` },
   });
 
   if (!response.ok) {
@@ -102,7 +104,7 @@ export async function fetchVideoDownloadUrl(fileId: string): Promise<string> {
     throw new Error(`文件信息获取失败 (${response.status}): ${text}`);
   }
 
-  const data = await response.json() as { file: { download_url: string } };
+  const data = (await response.json()) as { file: { download_url: string } };
   return data.file.download_url;
 }
 
