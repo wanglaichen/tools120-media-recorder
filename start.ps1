@@ -31,6 +31,7 @@ if (-not (Test-Path -LiteralPath $clientEnvLocal) -and (Test-Path -LiteralPath $
   Copy-Item -LiteralPath $clientEnvExample -Destination $clientEnvLocal
   Write-Host "Created $clientEnvLocal"
 }
+node (Join-Path $root "scripts/sync-minimax-env.mjs")
 
 if (-not (Test-Path -LiteralPath (Join-Path $root "node_modules"))) {
   Write-Host "Installing server dependencies..."

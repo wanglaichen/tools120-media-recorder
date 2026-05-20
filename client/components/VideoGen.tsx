@@ -12,13 +12,19 @@ import {
   Video,
   X,
 } from 'lucide-react';
+import { MiniMaxBillingAlert } from '@/components/MiniMaxBillingAlert';
 import {
   createVideoTask,
   downloadVideoBlob,
   fetchVideoDownloadUrl,
+  getResolutionsForModel,
+  normalizeResolution,
   queryVideoTaskStatus,
   type VideoMode,
+  type VideoModel,
+  type VideoResolution,
 } from '@/lib/minimax';
+import { buildMiniMaxBillingAlert } from '@/lib/minimax-errors';
 
 type VideoGenStatus = 'idle' | 'creating' | 'polling' | 'downloading' | 'done' | 'error';
 
@@ -40,18 +46,12 @@ const DURATION_OPTIONS = [
   { value: 10, label: '10 秒' },
 ];
 
-const RESOLUTION_OPTIONS = [
-  { value: '540P', label: '540P' },
-  { value: '720P', label: '720P' },
-  { value: '1080P', label: '1080P' },
-];
-
 export function VideoGen() {
   const [mode, setMode] = useState<VideoMode>('text-to-video');
   const [prompt, setPrompt] = useState('');
-  const [selectedModel, setSelectedModel] = useState('MiniMax-Hailuo-2.3');
+  const [selectedModel, setSelectedModel] = useState<VideoModel>('MiniMax-Hailuo-2.3');
   const [duration, setDuration] = useState(6);
-  const [resolution, setResolution] = useState('1080P');
+  const [resolution, setResolution] = useState<VideoResolution>('1080P');
   const [imageUrl, setImageUrl] = useState('');
   const [lastImageUrl, setLastImageUrl] = useState('');
   const [status, setStatus] = useState<VideoGenStatus>('idle');
@@ -59,8 +59,10 @@ export function VideoGen() {
   const [videoUrl, setVideoUrl] = useState('');
   const [error, setError] = useState('');
   const [progress, setProgress] = useState('');
+  const [elapsedSec, setElapsedSec] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const startedAtRef = useRef<number | null>(null);
 
   const hasImage = mode === 'image-to-video' || mode === 'start-end';
   const hasLastImage = mode === 'start-end';
@@ -74,6 +76,12 @@ export function VideoGen() {
   useEffect(() => {
     return () => stopAll();
   }, []);
+
+  const resolutionOptions = getResolutionsForModel(selectedModel);
+
+  useEffect(() => {
+    setResolution((current) => normalizeResolution(selectedModel, current));
+  }, [selectedModel]);
 
   const generateVideo = async () => {
     if (!prompt.trim()) {
@@ -93,20 +101,23 @@ export function VideoGen() {
     setError('');
     setVideoUrl('');
     setProgress('');
+    setElapsedSec(0);
+    startedAtRef.current = Date.now();
     setStatus('creating');
 
     try {
       const tid = await createVideoTask({
-        model: selectedModel as 'MiniMax-Hailuo-2.3' | 'MiniMax-Hailuo-02' | 'S2V-01',
+        model: selectedModel,
         prompt: prompt.trim(),
         duration: duration as 6 | 10,
-        resolution: resolution as '540P' | '720P' | '1080P',
+        resolution: normalizeResolution(selectedModel, resolution),
         first_frame_image: hasImage ? imageUrl.trim() : undefined,
         last_frame_image: hasLastImage ? lastImageUrl.trim() : undefined,
       });
       setTaskId(tid);
       setStatus('polling');
-      pollStatus(tid);
+      setProgress('任务已提交，正在查询状态…');
+      void pollStatus(tid);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setStatus('error');
@@ -116,21 +127,39 @@ export function VideoGen() {
   const pollStatus = async (tid: string) => {
     const controller = new AbortController();
     abortRef.current = controller;
+    const pollIntervalMs = 10_000;
+
+    const tickElapsed = () => {
+      if (startedAtRef.current) {
+        setElapsedSec(Math.floor((Date.now() - startedAtRef.current) / 1000));
+      }
+    };
+
+    const statusLabel: Record<string, string> = {
+      Pending: '排队中（MiniMax 服务端处理）',
+      Processing: '视频生成中，通常需 1～5 分钟',
+      Success: '生成完成，正在下载…',
+      Fail: '生成失败',
+    };
 
     while (!controller.signal.aborted) {
       try {
-        await sleep(10000);
-        if (controller.signal.aborted) break;
+        tickElapsed();
         const result = await queryVideoTaskStatus(tid);
-        setProgress(result.status === 'Processing' ? '视频生成中，请稍候...' : result.status);
+        setProgress(statusLabel[result.status] ?? result.status);
 
         if (result.status === 'Success') {
+          if (!result.file_id) {
+            throw new Error('任务成功但缺少 file_id');
+          }
           setStatus('downloading');
-          const downloadUrl = await fetchVideoDownloadUrl(result.file_id!);
+          setProgress('正在拉取视频文件…');
+          const downloadUrl = await fetchVideoDownloadUrl(result.file_id);
           const blob = await downloadVideoBlob(downloadUrl);
           const url = URL.createObjectURL(blob);
           setVideoUrl(url);
           setStatus('done');
+          setProgress('完成');
           break;
         }
 
@@ -139,6 +168,9 @@ export function VideoGen() {
           setStatus('error');
           break;
         }
+
+        if (controller.signal.aborted) break;
+        await sleep(pollIntervalMs);
       } catch (err) {
         if (controller.signal.aborted) break;
         setError(err instanceof Error ? err.message : String(err));
@@ -158,11 +190,13 @@ export function VideoGen() {
 
   const reset = () => {
     stopAll();
+    startedAtRef.current = null;
     setStatus('idle');
     setTaskId('');
     setVideoUrl('');
     setError('');
     setProgress('');
+    setElapsedSec(0);
   };
 
   const isWorking = status === 'creating' || status === 'polling' || status === 'downloading';
@@ -175,6 +209,11 @@ export function VideoGen() {
           <Video size={20} className="text-primary" />
           <h2 className="text-base font-semibold">视频生成</h2>
         </div>
+
+        <p className="mb-4 rounded-lg border border-border/80 bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+          使用 MiniMax 海螺视频 API，将消耗账户<strong className="font-medium text-foreground">视频周额度或余额</strong>
+          。额度不足时会在下方醒目提示，并说明如何充值或等待重置。
+        </p>
 
         <div className="grid gap-5">
           {/* 模式 */}
@@ -200,8 +239,8 @@ export function VideoGen() {
           <div>
             <label className="mb-1.5 block text-sm font-medium text-muted-foreground">模型</label>
             <select
-              value={model}
-              onChange={(e) => setSelectedModel(e.target.value)}
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value as VideoModel)}
               disabled={isWorking}
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
             >
@@ -281,23 +320,28 @@ export function VideoGen() {
               <label className="mb-1.5 block text-sm font-medium text-muted-foreground">分辨率</label>
               <select
                 value={resolution}
-                onChange={(e) => setResolution(e.target.value)}
+                onChange={(e) => setResolution(e.target.value as VideoResolution)}
                 disabled={isWorking}
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
               >
-                {RESOLUTION_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
+                {resolutionOptions.map((value) => (
+                  <option key={value} value={value}>{value}</option>
                 ))}
               </select>
             </div>
           </div>
 
-          {/* 错误提示 */}
+          {/* 费用 / 额度不足 */}
           {error && (
-            <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-500">
-              <AlertCircle size={15} className="mt-0.5 shrink-0" />
-              <span>{error}</span>
-            </div>
+            <>
+              <MiniMaxBillingAlert error={error} featureLabel="文字转视频" />
+              {!buildMiniMaxBillingAlert(error) && (
+                <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-500">
+                  <AlertCircle size={15} className="mt-0.5 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+            </>
           )}
 
           {/* 操作按钮 */}
@@ -315,19 +359,25 @@ export function VideoGen() {
               <button
                 type="button"
                 onClick={reset}
-                disabled={isWorking}
-                className="flex items-center justify-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm text-muted-foreground transition hover:bg-muted disabled:opacity-60"
+                className="flex items-center justify-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm text-muted-foreground transition hover:bg-muted"
               >
-                <X size={15} /> 重置
+                <X size={15} /> {isWorking ? '取消' : '重置'}
               </button>
             )}
           </div>
 
           {/* 进度 */}
-          {isWorking && progress && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 size={14} className="animate-spin" />
-              <span>{progress}</span>
+          {isWorking && (
+            <div className="space-y-1 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin shrink-0" />
+                <span>{progress || '处理中…'}</span>
+              </div>
+              {elapsedSec > 0 && (
+                <p className="text-xs text-muted-foreground/80">
+                  已等待 {elapsedSec} 秒（文生视频在云端排队+渲染，1080P 往往更久；开发模式可在浏览器控制台查看 [MiniMax] 日志）
+                </p>
+              )}
             </div>
           )}
 

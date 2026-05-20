@@ -23,7 +23,14 @@ function versionOk(v) {
   return false;
 }
 
+function syncMiniMaxEnv() {
+  const syncScript = join(ROOT, "scripts", "sync-minimax-env.mjs");
+  const r = spawnSync(process.execPath, [syncScript], { cwd: ROOT, stdio: "inherit" });
+  if (r.status !== 0) process.exit(r.status === null ? 1 : r.status);
+}
+
 function runNext(nodeBin) {
+  syncMiniMaxEnv();
   const nextBin = join(CLIENT_DIR, "node_modules", "next", "dist", "bin", "next");
   const r = spawnSync(nodeBin, [nextBin, "build"], {
     cwd: CLIENT_DIR,

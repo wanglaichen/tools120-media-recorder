@@ -21,9 +21,12 @@ import {
   Send,
   ShieldCheck,
   Square,
+  Settings,
   Trash2,
   UploadCloud,
   Video,
+  ImageIcon,
+  MessageSquare,
   X,
 } from 'lucide-react';
 import {
@@ -40,6 +43,10 @@ import {
 import { RecordingList } from '@/components/RecordingList';
 import { RecordingPickerModal } from '@/components/RecordingPickerModal';
 import { ServiceInfoBar } from '@/components/ServiceInfoBar';
+import { AppSidebar, type AppPageKey } from '@/components/AppSidebar';
+import { SettingsDialog } from '@/components/SettingsDialog';
+import { ImageGen } from '@/components/ImageGen';
+import { KnowledgeChat } from '@/components/KnowledgeChat';
 import { VideoGen } from '@/components/VideoGen';
 import type { RecordingClip } from '@/types/recording';
 import type {
@@ -48,7 +55,7 @@ import type {
   ProgressInfo,
 } from '@huggingface/transformers';
 
-type PageKey = 'capture' | 'convert' | 'video';
+type PageKey = AppPageKey;
 type RecorderStatus = 'idle' | 'requesting' | 'ready' | 'recording' | 'paused' | 'stopped' | 'error';
 type UploadStatus = 'idle' | 'uploading' | 'success' | 'error';
 type TranscriptionStatus = 'idle' | 'loading-model' | 'transcribing' | 'success' | 'error';
@@ -182,6 +189,7 @@ const getErrorMessage = (error: unknown, fallback: string) => {
 
 export default function HomePage() {
   const [activePage, setActivePage] = useState<PageKey>('capture');
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [status, setStatus] = useState<RecorderStatus>('idle');
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('idle');
   const [error, setError] = useState('');
@@ -259,7 +267,9 @@ export default function HomePage() {
     () => [
       { key: 'capture' as const, label: '音频采集', detail: '麦克风录音', icon: Mic },
       { key: 'convert' as const, label: '音频转换', detail: 'Whisper 转写', icon: Languages },
-      { key: 'video' as const, label: '文字转视频', detail: 'MiniMax AI', icon: Video },
+      { key: 'video' as const, label: '文字转视频', detail: 'MiniMax 视频', icon: Video },
+      { key: 'image' as const, label: '文字转图片', detail: 'MiniMax 图片', icon: ImageIcon },
+      { key: 'chat' as const, label: '知识问答', detail: '多会话对话', icon: MessageSquare },
     ],
     [],
   );
@@ -817,7 +827,7 @@ export default function HomePage() {
               <FileAudio size={22} strokeWidth={2.3} />
             </div>
             <div>
-              <h1 className="text-xl font-semibold tracking-normal text-foreground sm:text-2xl">音视频工作台</h1>
+              <h1 className="text-xl font-semibold tracking-normal text-foreground sm:text-2xl">聚合工作台</h1>
               <p className="mt-1 text-sm text-muted-foreground">MediaRecorder + OpenAI Whisper fp32</p>
             </div>
           </div>
@@ -825,45 +835,25 @@ export default function HomePage() {
             <span className="rounded-full border border-border bg-muted px-3 py-2 font-medium text-muted-foreground">
               本地浏览器转写
             </span>
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 font-medium text-foreground transition hover:bg-muted"
+              aria-label="打开设置"
+            >
+              <Settings size={16} />
+              设置
+            </button>
           </div>
         </div>
       </div>
 
-      <div className="mx-auto flex w-full max-w-7xl">
-        <aside className="w-[240px] shrink-0 border-r border-border bg-card p-4">
-          <nav className="rounded-lg border border-border bg-card p-2 shadow-panel" aria-label="页面列表">
-            {pages.map((page) => {
-              const Icon = page.icon;
-              const isActive = activePage === page.key;
-              return (
-                <button
-                  key={page.key}
-                  type="button"
-                  onClick={() => setActivePage(page.key)}
-                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition ${
-                    isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                  }`}
-                >
-                  <span
-                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
-                      isActive ? 'bg-white/10 text-white' : 'bg-muted text-muted-foreground'
-                    }`}
-                  >
-                    <Icon size={19} />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-sm font-semibold">{page.label}</span>
-                    <span className={`mt-0.5 block text-xs ${isActive ? 'text-white/70' : 'text-muted-foreground'}`}>
-                      {page.detail}
-                    </span>
-                  </span>
-                </button>
-              );
-            })}
-          </nav>
-        </aside>
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
-        <div className="min-w-0 flex-1 px-4 py-6 sm:px-6">
+      <div className="flex w-full">
+        <AppSidebar items={pages} activeKey={activePage} onSelect={setActivePage} />
+
+        <div className="mx-auto min-w-0 w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
           {activePage === 'capture' ? (
             <div className="grid gap-6 lg:grid-cols-[1.35fr_0.9fr]">
               <section className="rounded-lg border border-border bg-card p-5 shadow-panel sm:p-6">
@@ -1015,7 +1005,7 @@ export default function HomePage() {
 
               </aside>
             </div>
-          ) : (
+          ) : activePage === 'convert' ? (
             <div className="grid gap-6 xl:grid-cols-[0.95fr_1.25fr]">
               <section className="rounded-lg border border-border bg-card p-5 shadow-panel sm:p-6">
                 <div className="flex items-start justify-between gap-4">
@@ -1274,6 +1264,10 @@ export default function HomePage() {
             </div>
           ) : activePage === 'video' ? (
             <VideoGen />
+          ) : activePage === 'image' ? (
+            <ImageGen />
+          ) : activePage === 'chat' ? (
+            <KnowledgeChat />
           ) : null}
         </div>
       </div>
