@@ -28,8 +28,9 @@ if (is404Page) {
   process.exit(1);
 }
 
-if (!html.includes('v0.') && !html.match(/v\d+\.\d+\.\d+/)) {
-  console.warn('[verify-static-export] 警告: index.html 中未找到版本号标记');
+if (!html.match(/v\d+\.\d+\.\d+/) && !html.includes('BUILD_ID')) {
+  console.error('[verify-static-export] index.html 中未找到版本号（v* 或 BUILD_ID）');
+  process.exit(1);
 }
 
 if (fs.existsSync(path.join(dir, '404.html'))) {
