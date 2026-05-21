@@ -4,6 +4,13 @@
   "installCommand": "npm install && npm install --prefix client --include=optional && node scripts/ensure-tailwind-native.mjs",
   "buildCommand": "bash scripts/edgeone-build.sh",
   "outputDirectory": "./dist",
+  "redirects": [
+    {
+      "source": "/index.html",
+      "destination": "/",
+      "statusCode": 301
+    }
+  ],
   "cloudFunctions": {
     "nodejs": {
       "externalNodeModules": ["express", "cors", "multer"],

@@ -7,6 +7,8 @@ cd "$ROOT"
 
 echo "=== CI build with Node $(node -v) ==="
 
+node scripts/write-build-version.mjs
+
 # 安装根目录依赖
 npm install --no-audit --no-fund
 
@@ -18,7 +20,7 @@ export NEXT_TELEMETRY_DISABLED=1
 export NEXT_PUBLIC_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL:-https://tools120-media-recorder.edgeone.dev}"
 npm run --prefix client build
 
-# 同步输出
+node scripts/postprocess-static-export.mjs
 node scripts/sync-dist.mjs
 
 test -f ./dist/index.html

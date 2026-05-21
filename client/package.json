@@ -8,8 +8,9 @@
   "scripts": {
     "dev": "next dev --turbopack -H 127.0.0.1 -p 5173",
     "dev:no-turbopack": "next dev -H 127.0.0.1 -p 5173",
-    "predev": "node ../scripts/sync-minimax-env.mjs",
-    "prebuild": "node ../scripts/sync-minimax-env.mjs",
+    "predev": "node ../scripts/sync-minimax-env.mjs && node ../scripts/write-build-version.mjs",
+    "prebuild": "node ../scripts/sync-minimax-env.mjs && node ../scripts/write-build-version.mjs",
+    "postbuild": "node ../scripts/postprocess-static-export.mjs",
     "build": "node ../scripts/build-with-node20.mjs",
     "start": "next start",
     "lint": "next lint"

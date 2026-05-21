@@ -7,7 +7,7 @@
     "server:dev": "node server/index.mjs",
     "client:dev": "npm --prefix client run dev",
     "preclient:build": "node scripts/ensure-tailwind-native.mjs",
-    "client:build": "node scripts/build-with-node20.mjs && node scripts/sync-dist.mjs",
+    "client:build": "node scripts/build-with-node20.mjs && node scripts/postprocess-static-export.mjs && node scripts/sync-dist.mjs",
     "build": "npm run client:build",
     "ci:build": "bash scripts/ci-build.sh",
     "client:preview": "npm --prefix client run preview",

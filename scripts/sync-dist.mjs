@@ -11,6 +11,12 @@ if (!fs.existsSync(src)) {
   process.exit(1);
 }
 
+const indexHtml = path.join(src, 'index.html');
+if (!fs.existsSync(indexHtml)) {
+  console.error('client/out/index.html 不存在，构建可能失败');
+  process.exit(1);
+}
+
 fs.rmSync(dest, { recursive: true, force: true });
 fs.cpSync(src, dest, { recursive: true });
 console.log('已同步 client/out → dist');
