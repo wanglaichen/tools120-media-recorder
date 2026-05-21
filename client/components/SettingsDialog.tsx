@@ -11,6 +11,11 @@ import {
   type AiProviderId,
   type AppSettings,
 } from '@/lib/app-settings-storage';
+import {
+  detectMiniMaxTransport,
+  getMiniMaxConfigEndpoint,
+  resetMiniMaxTransportCache,
+} from '@/lib/minimax-transport';
 
 type Props = {
   open: boolean;
@@ -22,10 +27,13 @@ const inputClass =
 
 export function SettingsDialog({ open, onClose }: Props) {
   const [draft, setDraft] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
+  const [serverMiniMax, setServerMiniMax] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setDraft(loadAppSettings());
+    resetMiniMaxTransportCache();
+    void detectMiniMaxTransport().then((mode) => setServerMiniMax(mode === 'server'));
   }, [open]);
 
   const setProvider = (id: AiProviderId, patch: Partial<AiProviderConfig>) => {
@@ -90,22 +98,35 @@ export function SettingsDialog({ open, onClose }: Props) {
                     </span>
                   ) : null}
                 </div>
+                {meta.id === 'minimax' && serverMiniMax ? (
+                  <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-foreground">
+                    已由服务器统一配置（根目录 <code className="text-[11px]">.env</code> 的{' '}
+                    <code className="text-[11px]">MINIMAX_API_KEY</code>），所有浏览器共用，无需在本机填写
+                    Key。请保持 API 服务运行（{getMiniMaxConfigEndpoint()}）。
+                  </p>
+                ) : null}
                 <div>
                   <label className="text-xs font-medium text-foreground">API Key</label>
                   <input
                     type="password"
                     autoComplete="off"
-                    disabled={disabled}
+                    disabled={disabled || (meta.id === 'minimax' && serverMiniMax)}
                     className={`${inputClass} disabled:cursor-not-allowed disabled:opacity-50`}
                     value={cfg.apiKey}
                     onChange={(e) => setProvider(meta.id, { apiKey: e.target.value })}
-                    placeholder={meta.id === 'minimax' ? '从 platform.minimaxi.com 获取' : ''}
+                    placeholder={
+                      meta.id === 'minimax' && serverMiniMax
+                        ? '由服务器 .env 提供'
+                        : meta.id === 'minimax'
+                          ? '从 platform.minimaxi.com 获取'
+                          : ''
+                    }
                   />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-foreground">API 地址</label>
                   <input
-                    disabled={disabled}
+                    disabled={disabled || (meta.id === 'minimax' && serverMiniMax)}
                     className={`${inputClass} disabled:cursor-not-allowed disabled:opacity-50`}
                     value={cfg.baseUrl}
                     onChange={(e) => setProvider(meta.id, { baseUrl: e.target.value })}
@@ -118,7 +139,9 @@ export function SettingsDialog({ open, onClose }: Props) {
         </div>
 
         <p className="border-t border-border px-4 py-2 text-[10px] text-muted-foreground">
-          保存在本机浏览器。未填写时，MiniMax 会尝试使用根目录 .env 同步的环境变量。
+          {serverMiniMax
+            ? '推荐：在根目录 .env 配置 MINIMAX_API_KEY，用 start.ps1 启动；任意浏览器访问即可使用 MiniMax。'
+            : '未检测到服务器密钥时，可在此填写（仅当前浏览器）。本地开发请优先配置根目录 .env 并启动 API 服务。'}
         </p>
 
         <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">

@@ -26,12 +26,17 @@ const host = process.env.APP_HOST || '127.0.0.1';
 const port = Number(process.env.APP_PORT || 8787);
 const uploadDir = path.resolve(rootDir, process.env.UPLOAD_DIR || 'output/audio');
 const manifestPath = path.join(uploadDir, 'manifest.json');
+const chatSessionsPath = path.resolve(
+  rootDir,
+  process.env.CHAT_SESSIONS_PATH || 'output/chat/knowledge-sessions.json',
+);
 const maxAudioMb = Number(process.env.MAX_AUDIO_MB || 25);
 
 const app = createApiApp({
   storage: 'disk',
   uploadDir,
   manifestPath,
+  chatSessionsPath,
   maxAudioMb,
 });
 
@@ -41,4 +46,5 @@ app.listen(port, host, () => {
   console.log(`API server http://${host}:${port}`);
   console.log(`Upload dir: ${uploadDir}`);
   console.log(`Manifest: ${manifestPath}`);
+  console.log(`Chat sessions: ${chatSessionsPath}`);
 });

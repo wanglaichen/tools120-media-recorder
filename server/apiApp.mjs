@@ -3,6 +3,8 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import multer from 'multer';
+import { attachMiniMaxProxy } from './minimaxProxy.mjs';
+import { attachChatSessions } from './chatSessions.mjs';
 
 const defaultManifest = () => ({
   version: 1,
@@ -25,7 +27,7 @@ const getClientIp = (req) => {
   return req.socket?.remoteAddress || '-';
 };
 
-/** @param {{ storage: 'disk', uploadDir: string, manifestPath: string, maxAudioMb: number } | { storage: 'memory', maxAudioMb: number }} opts */
+/** @param {{ storage: 'disk', uploadDir: string, manifestPath: string, maxAudioMb: number, chatSessionsPath?: string } | { storage: 'memory', maxAudioMb: number, chatSessionsPath?: string }} opts */
 export function createApiApp(opts) {
   const maxAudioMb = opts.maxAudioMb ?? 25;
   const clientOrigins = (process.env.CLIENT_ORIGIN ||
@@ -141,6 +143,14 @@ export function createApiApp(opts) {
   app.use(express.json({ limit: '1mb' }));
 
   const router = express.Router();
+  const minimaxRouter = express.Router();
+  minimaxRouter.use(express.json({ limit: '32mb' }));
+  attachMiniMaxProxy(minimaxRouter);
+  router.use(minimaxRouter);
+
+  if (opts.chatSessionsPath) {
+    attachChatSessions(router, opts.chatSessionsPath);
+  }
 
   router.get('/health', (req, res) => {
     res.json({

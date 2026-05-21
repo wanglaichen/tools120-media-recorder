@@ -5,6 +5,10 @@
  */
 
 import { assertMiniMaxApiKey, resolveMiniMaxBaseUrl } from '@/lib/ai-provider-config';
+import {
+  getMiniMaxProxyEndpoint,
+  useMiniMaxServerProxy,
+} from '@/lib/minimax-transport';
 
 const DEV = process.env.NODE_ENV === 'development';
 
@@ -113,16 +117,46 @@ function assertBaseResp(data: { base_resp?: MiniMaxBaseResp }, label: string) {
 }
 
 async function minimaxFetch(url: string, init: RequestInit, label: string): Promise<Response> {
-  logMiniMax(`${label} request`, { url, method: init.method ?? 'GET' });
-  const response = await fetch(url, init);
+  const method = init.method ?? 'GET';
+  logMiniMax(`${label} request`, { url, method });
+
+  let response: Response;
+  if (await useMiniMaxServerProxy()) {
+    const parsed = new URL(url);
+    const path = parsed.pathname + parsed.search;
+    let body: unknown;
+    if (init.body && typeof init.body === 'string') {
+      try {
+        body = JSON.parse(init.body) as unknown;
+      } catch {
+        body = undefined;
+      }
+    }
+    response = await fetch(getMiniMaxProxyEndpoint(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, method, body }),
+    });
+  } else {
+    const apiKey = assertApiKey();
+    const headers = new Headers(init.headers);
+    headers.set('Authorization', `Bearer ${apiKey}`);
+    response = await fetch(url, { ...init, headers });
+  }
+
   const text = await response.text();
   logMiniMax(`${label} response`, { status: response.status, body: text.slice(0, 500) });
   if (!response.ok) {
     let detail = text.slice(0, 300);
     try {
-      const parsed = JSON.parse(text) as { base_resp?: MiniMaxBaseResp };
+      const parsed = JSON.parse(text) as {
+        base_resp?: MiniMaxBaseResp;
+        error?: string;
+      };
       if (parsed.base_resp?.status_msg) {
         detail = formatMiniMaxErrorMessage(parsed.base_resp.status_msg, parsed.base_resp.status_code);
+      } else if (parsed.error) {
+        detail = parsed.error;
       }
     } catch {
       /* 非 JSON 则保留原文 */
@@ -134,7 +168,6 @@ async function minimaxFetch(url: string, init: RequestInit, label: string): Prom
 
 /** 创建视频生成任务 */
 export async function createVideoTask(params: VideoCreateParams): Promise<string> {
-  const apiKey = assertApiKey();
   const url = `${miniMaxBaseUrl()}/v1/video_generation`;
   const payload: Record<string, unknown> = {
     model: params.model,
@@ -151,10 +184,7 @@ export async function createVideoTask(params: VideoCreateParams): Promise<string
     url,
     {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     },
     '创建视频任务',
@@ -182,13 +212,8 @@ export async function createVideoTask(params: VideoCreateParams): Promise<string
 
 /** 查询任务状态 */
 export async function queryVideoTaskStatus(taskId: string): Promise<VideoStatus> {
-  const apiKey = assertApiKey();
   const url = `${miniMaxBaseUrl()}/v1/query/video_generation?task_id=${encodeURIComponent(taskId)}`;
-  const response = await minimaxFetch(
-    url,
-    { headers: { Authorization: `Bearer ${apiKey}` } },
-    '查询任务状态',
-  );
+  const response = await minimaxFetch(url, { method: 'GET' }, '查询任务状态');
 
   const data = parseJsonBody<VideoStatus & { base_resp?: MiniMaxBaseResp }>(
     await response.text(),
@@ -204,13 +229,8 @@ export async function queryVideoTaskStatus(taskId: string): Promise<VideoStatus>
 
 /** 获取视频下载链接 */
 export async function fetchVideoDownloadUrl(fileId: string): Promise<string> {
-  const apiKey = assertApiKey();
   const url = `${miniMaxBaseUrl()}/v1/files/retrieve?file_id=${encodeURIComponent(fileId)}`;
-  const response = await minimaxFetch(
-    url,
-    { headers: { Authorization: `Bearer ${apiKey}` } },
-    '获取下载链接',
-  );
+  const response = await minimaxFetch(url, { method: 'GET' }, '获取下载链接');
 
   const data = parseJsonBody<{ file?: { download_url?: string }; base_resp?: MiniMaxBaseResp }>(
     await response.text(),
@@ -249,7 +269,6 @@ export interface ImageCreateParams {
 
 /** 文生图 / 图生图，返回可预览的 data URL 列表 */
 export async function generateImages(params: ImageCreateParams): Promise<string[]> {
-  const apiKey = assertApiKey();
   const url = `${miniMaxBaseUrl()}/v1/image_generation`;
   const payload: Record<string, unknown> = {
     model: params.model ?? 'image-01',
@@ -271,10 +290,7 @@ export async function generateImages(params: ImageCreateParams): Promise<string[
     url,
     {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     },
     '生成图片',
@@ -317,7 +333,6 @@ export interface ChatCompletionParams {
 
 /** 多轮对话：传入完整历史，模型具备会话记忆 */
 export async function createChatCompletion(params: ChatCompletionParams): Promise<string> {
-  const apiKey = assertApiKey();
   const url = `${miniMaxBaseUrl()}/v1/chat/completions`;
   const payload = {
     model: params.model ?? 'MiniMax-M2.7',
@@ -329,10 +344,7 @@ export async function createChatCompletion(params: ChatCompletionParams): Promis
     url,
     {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     },
     '知识问答',

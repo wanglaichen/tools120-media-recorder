@@ -8,7 +8,9 @@ export function resolveMiniMaxConfig(): { apiKey: string; baseUrl: string } {
 export function assertMiniMaxApiKey(): string {
   const { apiKey } = resolveMiniMaxConfig();
   if (!apiKey) {
-    throw new Error('请在右上角「设置」中配置 MiniMax API Key');
+    throw new Error(
+      '未配置 MiniMax：请在项目根目录 .env 设置 MINIMAX_API_KEY 并启动 API 服务（start.ps1），或在「设置」中填写 API Key',
+    );
   }
   return apiKey;
 }

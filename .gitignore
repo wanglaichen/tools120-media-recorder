@@ -20,6 +20,9 @@ client/dist/
 output/audio/*
 !output/audio/manifest.json
 
+# Knowledge chat sessions (server-side)
+output/chat/
+
 # Logs
 *.log
 npm-debug.log*

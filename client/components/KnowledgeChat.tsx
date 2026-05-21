@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
+  Eraser,
   Loader2,
   MessageSquare,
   MessageSquarePlus,
@@ -14,6 +15,7 @@ import { MiniMaxBillingAlert } from '@/components/MiniMaxBillingAlert';
 import { createChatCompletion, type ChatModel, type ChatTurn } from '@/lib/minimax';
 import { buildMiniMaxBillingAlert } from '@/lib/minimax-errors';
 import {
+  clearAllChatSessions,
   createEmptySession,
   createMessage,
   deriveSessionTitle,
@@ -50,31 +52,40 @@ export function KnowledgeChat() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [hydrated, setHydrated] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    const loaded = loadChatSessions();
-    if (loaded.length === 0) {
-      const first = createEmptySession();
-      setSessions([first]);
-      setActiveId(first.id);
-    } else {
-      setSessions(loaded);
-      setActiveId(loaded[0].id);
-    }
-    setHydrated(true);
+    let cancelled = false;
+    void (async () => {
+      const loaded = await loadChatSessions();
+      if (cancelled) return;
+      if (loaded.length === 0) {
+        const first = createEmptySession();
+        setSessions([first]);
+        setActiveId(first.id);
+        void saveChatSessions([first]);
+      } else {
+        setSessions(loaded);
+        setActiveId(loaded[0].id);
+      }
+      setHydrated(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const persist = useCallback((next: ChatSession[]) => {
     setSessions(next);
-    saveChatSessions(next);
+    void saveChatSessions(next);
   }, []);
 
   const patchSession = useCallback((id: string, updater: (s: ChatSession) => ChatSession) => {
     setSessions((prev) => {
       const next = prev.map((s) => (s.id === id ? updater(s) : s));
-      saveChatSessions(next);
+      void saveChatSessions(next);
       return next;
     });
   }, []);
@@ -111,6 +122,30 @@ export function KnowledgeChat() {
       if (activeId === id) setActiveId(next[0].id);
     }
     setError('');
+  };
+
+  const clearAllHistory = async () => {
+    if (clearing) return;
+    const hasContent = sessions.some((s) => s.messages.length > 0);
+    if (hasContent) {
+      const ok = window.confirm(
+        '确定清理全部知识问答历史？所有浏览器/设备上的会话记录都会被删除，且无法恢复。',
+      );
+      if (!ok) return;
+    }
+    setClearing(true);
+    setError('');
+    try {
+      await clearAllChatSessions();
+      const session = createEmptySession();
+      persist([session]);
+      setActiveId(session.id);
+      setInput('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setClearing(false);
+    }
   };
 
   const sendMessage = async () => {
@@ -176,7 +211,7 @@ export function KnowledgeChat() {
     <div className="flex h-[min(75vh,760px)] overflow-hidden rounded-lg border border-border bg-card shadow-panel">
       {/* 会话列表 */}
       <aside className="flex w-[220px] shrink-0 flex-col border-r border-border bg-muted/30">
-        <div className="border-b border-border p-3">
+        <div className="space-y-2 border-b border-border p-3">
           <button
             type="button"
             onClick={newSession}
@@ -184,6 +219,19 @@ export function KnowledgeChat() {
           >
             <MessageSquarePlus size={16} />
             新对话
+          </button>
+          <button
+            type="button"
+            onClick={() => void clearAllHistory()}
+            disabled={clearing || loading}
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground transition hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+          >
+            {clearing ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Eraser size={16} />
+            )}
+            清理全部
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
@@ -324,7 +372,7 @@ export function KnowledgeChat() {
             </button>
           </div>
           <p className="mt-2 text-[10px] text-muted-foreground/70">
-            会话保存在本机浏览器，切换会话各自独立记忆；使用 MiniMax 文本模型 API。
+            会话保存在 API 服务器，任意浏览器/电脑刷新后仍可见；点左侧「清理全部」可删除全部历史。
           </p>
         </div>
       </div>

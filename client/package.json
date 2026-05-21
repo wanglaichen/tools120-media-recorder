@@ -1,6 +1,6 @@
 {
   "name": "tools020-media-recorder",
-  "version": "0.2.3",
+  "version": "0.5.4",
   "private": true,
   "engines": {
     "node": ">=18.18.0"
