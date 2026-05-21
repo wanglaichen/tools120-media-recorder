@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Settings, X } from 'lucide-react';
+import { Eye, EyeOff, Settings, X } from 'lucide-react';
 import {
   AI_PROVIDER_META,
   DEFAULT_APP_SETTINGS,
@@ -23,18 +23,37 @@ type Props = {
 };
 
 const inputClass =
-  'mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40';
+  'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40';
 
 export function SettingsDialog({ open, onClose }: Props) {
   const [draft, setDraft] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
   const [serverMiniMax, setServerMiniMax] = useState(false);
+  const [showApiKey, setShowApiKey] = useState<Record<AiProviderId, boolean>>({
+    minimax: false,
+    deepseek: false,
+  });
 
   useEffect(() => {
     if (!open) return;
     setDraft(loadAppSettings());
+    setShowApiKey({ minimax: false, deepseek: false });
     resetMiniMaxTransportCache();
     void detectMiniMaxTransport().then((mode) => setServerMiniMax(mode === 'server'));
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open, onClose]);
 
   const setProvider = (id: AiProviderId, patch: Partial<AiProviderConfig>) => {
     setDraft((prev) => ({
@@ -50,19 +69,24 @@ export function SettingsDialog({ open, onClose }: Props) {
     onClose();
   };
 
+  const toggleKeyVisible = (id: AiProviderId) => {
+    setShowApiKey((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 dark:bg-slate-950/60"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="settings-dialog-title"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* 遮罩：仅阻挡背景操作，点击不关闭 */}
       <div
-        className="w-full max-w-md overflow-hidden rounded-lg border border-border bg-card shadow-xl"
-        onClick={(e) => e.stopPropagation()}
+        className="absolute inset-0 bg-slate-950/40 dark:bg-slate-950/60"
+        aria-hidden="true"
+      />
+      <div
+        className="relative z-10 w-full max-w-md overflow-hidden rounded-lg border border-border bg-card shadow-xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-dialog-title"
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">
@@ -85,6 +109,7 @@ export function SettingsDialog({ open, onClose }: Props) {
           {AI_PROVIDER_META.map((meta) => {
             const cfg = draft.providers[meta.id];
             const disabled = !meta.enabled;
+            const keyDisabled = disabled || (meta.id === 'minimax' && serverMiniMax);
             return (
               <section
                 key={meta.id}
@@ -107,27 +132,39 @@ export function SettingsDialog({ open, onClose }: Props) {
                 ) : null}
                 <div>
                   <label className="text-xs font-medium text-foreground">API Key</label>
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    disabled={disabled || (meta.id === 'minimax' && serverMiniMax)}
-                    className={`${inputClass} disabled:cursor-not-allowed disabled:opacity-50`}
-                    value={cfg.apiKey}
-                    onChange={(e) => setProvider(meta.id, { apiKey: e.target.value })}
-                    placeholder={
-                      meta.id === 'minimax' && serverMiniMax
-                        ? '由服务器 .env 提供'
-                        : meta.id === 'minimax'
-                          ? '从 platform.minimaxi.com 获取'
-                          : ''
-                    }
-                  />
+                  <div className="relative mt-1">
+                    <input
+                      type={showApiKey[meta.id] ? 'text' : 'password'}
+                      autoComplete="off"
+                      disabled={keyDisabled}
+                      className={`${inputClass} pr-10 disabled:cursor-not-allowed disabled:opacity-50`}
+                      value={cfg.apiKey}
+                      onChange={(e) => setProvider(meta.id, { apiKey: e.target.value })}
+                      placeholder={
+                        meta.id === 'minimax' && serverMiniMax
+                          ? '由服务器 .env 提供'
+                          : meta.id === 'minimax'
+                            ? '从 platform.minimaxi.com 获取'
+                            : ''
+                      }
+                    />
+                    <button
+                      type="button"
+                      disabled={keyDisabled}
+                      onClick={() => toggleKeyVisible(meta.id)}
+                      className="absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                      aria-label={showApiKey[meta.id] ? '隐藏 API Key' : '显示 API Key'}
+                      tabIndex={keyDisabled ? -1 : 0}
+                    >
+                      {showApiKey[meta.id] ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="text-xs font-medium text-foreground">API 地址</label>
                   <input
                     disabled={disabled || (meta.id === 'minimax' && serverMiniMax)}
-                    className={`${inputClass} disabled:cursor-not-allowed disabled:opacity-50`}
+                    className={`${inputClass} mt-1 disabled:cursor-not-allowed disabled:opacity-50`}
                     value={cfg.baseUrl}
                     onChange={(e) => setProvider(meta.id, { baseUrl: e.target.value })}
                     placeholder="https://api.minimaxi.com"
