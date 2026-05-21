@@ -1,6 +1,8 @@
 /** MiniMax 费用 / 额度类错误识别与友好提示 */
 
-export type MiniMaxBillingKind = 'weekly_quota' | 'balance' | 'other';
+export type MiniMaxFeature = 'chat' | 'video' | 'image';
+
+export type MiniMaxBillingKind = 'weekly_quota' | 'text_quota' | 'balance' | 'other';
 
 export interface MiniMaxBillingAlert {
   kind: MiniMaxBillingKind;
@@ -12,18 +14,45 @@ export interface MiniMaxBillingAlert {
 
 const CONSOLE_URL = 'https://platform.minimaxi.com/user-center/payment/token-plan';
 
-export function detectMiniMaxBillingIssue(text: string): MiniMaxBillingKind | null {
+function isVideoQuotaMessage(text: string): boolean {
   const lower = text.toLowerCase();
-  if (
+  return /video|hailuo|海螺|视频|周额度/.test(lower + text);
+}
+
+function isTextUsageLimitMessage(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
     lower.includes('usage limit exceeded') ||
     lower.includes('weekly usage limit') ||
-    lower.includes('token plan') ||
-    text.includes('视频周额度') ||
-    text.includes('周额度不足') ||
-    /\b0\/0\b/.test(text)
-  ) {
-    return 'weekly_quota';
+    text.includes('2056') ||
+    /5[- ]?hour|5小时|滚动.*窗口/.test(lower + text)
+  );
+}
+
+function isNonBillingError(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes('invalid') ||
+    lower.includes('unauthorized') ||
+    lower.includes('forbidden') ||
+    lower.includes('not found') ||
+    lower.includes('model') ||
+    lower.includes('rate limit') ||
+    lower.includes('rpm') ||
+    lower.includes('tpm')
+  );
+}
+
+export function detectMiniMaxBillingIssue(
+  text: string,
+  feature: MiniMaxFeature = 'video',
+): MiniMaxBillingKind | null {
+  if (isNonBillingError(text) && !text.includes('余额') && !text.includes('balance')) {
+    return null;
   }
+
+  const lower = text.toLowerCase();
+
   if (
     lower.includes('insufficient balance') ||
     text.includes('账户余额不足') ||
@@ -33,15 +62,58 @@ export function detectMiniMaxBillingIssue(text: string): MiniMaxBillingKind | nu
   ) {
     return 'balance';
   }
+
+  if (isTextUsageLimitMessage(text)) {
+    if (feature === 'video' || isVideoQuotaMessage(text)) {
+      return 'weekly_quota';
+    }
+    if (feature === 'chat' || feature === 'image') {
+      return 'text_quota';
+    }
+  }
+
+  if (feature === 'video') {
+    if (
+      lower.includes('token plan') ||
+      text.includes('视频周额度') ||
+      text.includes('周额度不足') ||
+      /\b0\/0\b/.test(text)
+    ) {
+      return 'weekly_quota';
+    }
+  }
+
   return null;
 }
 
-export function buildMiniMaxBillingAlert(error: unknown): MiniMaxBillingAlert | null {
+export function buildMiniMaxBillingAlert(
+  error: unknown,
+  feature: MiniMaxFeature = 'video',
+): MiniMaxBillingAlert | null {
   const raw = error instanceof Error ? error.message : String(error);
-  const kind = detectMiniMaxBillingIssue(raw);
+  const kind = detectMiniMaxBillingIssue(raw, feature);
   if (!kind) return null;
 
   const resetMatch = raw.match(/resets at ([^)\s]+)/i);
+
+  if (kind === 'text_quota') {
+    return {
+      kind,
+      title: 'MiniMax 文本用量已达上限',
+      summary:
+        '当前 API Key 在 Token Plan 的「文本」滚动窗口（通常每 5 小时）内请求次数或 Token 已用尽；与视频周额度、账户余额是分开计费的。',
+      tips: [
+        '登录 MiniMax 控制台 → 用量/套餐，查看文本模型（M2.7 / M2.5 等）剩余额度',
+        '使用「M2.7 极速」需套餐支持 MiniMax-M2.7-highspeed（High-Speed 档）',
+        resetMatch
+          ? `额度预计释放/重置：${resetMatch[1]}`
+          : '若提示 usage limit exceeded（错误码 2056），需等待下一 5 小时窗口',
+        `控制台：${CONSOLE_URL}`,
+        `接口原始信息：${raw}`,
+      ],
+      raw,
+    };
+  }
 
   if (kind === 'weekly_quota') {
     return {
@@ -59,10 +131,17 @@ export function buildMiniMaxBillingAlert(error: unknown): MiniMaxBillingAlert | 
     };
   }
 
+  const actionLabel =
+    feature === 'chat'
+      ? '知识问答（文本对话）'
+      : feature === 'image'
+        ? '图片生成'
+        : '视频生成';
+
   return {
     kind: 'balance',
     title: 'MiniMax 账户余额不足',
-    summary: '当前账户余额不足以完成本次视频生成，请先充值后再试。',
+    summary: `当前账户余额不足以完成本次${actionLabel}，请先充值后再试。`,
     tips: [
       '登录 MiniMax 控制台检查余额与账单',
       `充值入口：${CONSOLE_URL}`,
@@ -72,8 +151,11 @@ export function buildMiniMaxBillingAlert(error: unknown): MiniMaxBillingAlert | 
   };
 }
 
-export function formatErrorForDisplay(error: unknown): string {
-  const billing = buildMiniMaxBillingAlert(error);
+export function formatErrorForDisplay(
+  error: unknown,
+  feature: MiniMaxFeature = 'video',
+): string {
+  const billing = buildMiniMaxBillingAlert(error, feature);
   if (billing) {
     return `${billing.title}。${billing.summary}`;
   }

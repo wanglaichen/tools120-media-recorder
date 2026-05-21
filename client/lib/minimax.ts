@@ -5,10 +5,17 @@
  */
 
 import { assertMiniMaxApiKey, resolveMiniMaxBaseUrl } from '@/lib/ai-provider-config';
+import type { MiniMaxFeature } from '@/lib/minimax-errors';
 import {
   getMiniMaxProxyEndpoint,
   useMiniMaxServerProxy,
 } from '@/lib/minimax-transport';
+
+function labelToFeature(label: string): MiniMaxFeature {
+  if (label.includes('视频')) return 'video';
+  if (label.includes('图片')) return 'image';
+  return 'chat';
+}
 
 const DEV = process.env.NODE_ENV === 'development';
 
@@ -65,8 +72,41 @@ export interface VideoStatus {
 
 type MiniMaxBaseResp = {
   status_code?: number;
-  status_msg?: string;
+  status_msg?: unknown;
 };
+
+/** OpenAI / MiniMax 错误字段可能是字符串或 { message, type } 等对象 */
+function normalizeApiErrorDetail(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (value instanceof Error) return value.message;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'object') {
+    const o = value as Record<string, unknown>;
+    if (typeof o.message === 'string' && o.message.trim()) return o.message.trim();
+    if (typeof o.status_msg === 'string' && o.status_msg.trim()) return o.status_msg.trim();
+    if (typeof o.msg === 'string' && o.msg.trim()) return o.msg.trim();
+    if (typeof o.detail === 'string' && o.detail.trim()) return o.detail.trim();
+    if (typeof o.error === 'string' && o.error.trim()) return o.error.trim();
+    if (o.error && typeof o.error === 'object') {
+      const nested = normalizeApiErrorDetail(o.error);
+      if (nested) return nested;
+    }
+    if (o.base_resp && typeof o.base_resp === 'object') {
+      const nested = normalizeApiErrorDetail(
+        (o.base_resp as Record<string, unknown>).status_msg,
+      );
+      if (nested) return nested;
+    }
+    try {
+      const s = JSON.stringify(value);
+      if (s && s !== '{}') return s;
+    } catch {
+      /* ignore */
+    }
+  }
+  return String(value);
+}
 
 function logMiniMax(step: string, detail: unknown) {
   if (!DEV) return;
@@ -90,34 +130,47 @@ function parseJsonBody<T>(text: string, label: string): T {
 }
 
 /** 将 MiniMax 英文业务错误转为更易读的中文说明 */
-function formatMiniMaxErrorMessage(raw: string, statusCode?: number): string {
-  const lower = raw.toLowerCase();
-  const codeHint = statusCode !== undefined ? `（base_resp.status_code=${statusCode}）` : '';
+function formatMiniMaxErrorMessage(
+  raw: unknown,
+  statusCode?: number,
+  feature: MiniMaxFeature = 'video',
+): string {
+  const text = normalizeApiErrorDetail(raw) || '未知错误';
+  const lower = text.toLowerCase();
+  const codeHint = statusCode !== undefined ? `（status_code=${statusCode}）` : '';
 
   if (lower.includes('usage limit exceeded') || lower.includes('weekly usage limit')) {
-    const resetMatch = raw.match(/resets at ([^)]+)/i);
-    const resetHint = resetMatch ? `，重置时间 ${resetMatch[1]}` : '';
-    return `【视频周额度不足】本周视频生成次数已用完或未开通${resetHint}。账户余额与视频周额度分开计费，请到 MiniMax 控制台查看套餐/充值。原始信息：${raw}`;
+    const resetMatch = text.match(/resets at ([^)]+)/i);
+    const resetHint = resetMatch ? `，预计释放时间 ${resetMatch[1]}` : '';
+    if (feature === 'video' || /video|hailuo|海螺|视频/.test(lower)) {
+      return `【视频周额度不足】本周视频生成次数已用完或未开通${resetHint}。原始信息：${text}`;
+    }
+    return `【文本用量已达上限】Token Plan 文本滚动窗口（约 5 小时）内额度已用尽${resetHint}${codeHint}。请到控制台查看文本用量或升级套餐；「M2.7 极速」需 High-Speed 档。原始信息：${text}`;
   }
   if (lower.includes('insufficient balance') || (lower.includes('balance') && !lower.includes('invalid'))) {
-    return `【账户余额不足】MiniMax 余额不足以支付本次请求${codeHint}。请到控制台充值后再试。原始信息：${raw}`;
+    return `【账户余额不足】MiniMax 余额不足以支付本次请求${codeHint}。请到控制台充值后再试。原始信息：${text}`;
   }
   if (lower.includes('invalid params')) {
-    return `参数无效${codeHint}：${raw.replace(/^invalid params,\s*/i, '')}`;
+    return `参数无效${codeHint}：${text.replace(/^invalid params,\s*/i, '')}`;
   }
-  return statusCode ? `${raw}${codeHint}` : raw;
+  return statusCode ? `${text}${codeHint}` : text;
 }
 
 /** MiniMax 常在 HTTP 200 时通过 base_resp.status_code 表示业务错误 */
 function assertBaseResp(data: { base_resp?: MiniMaxBaseResp }, label: string) {
   const code = data.base_resp?.status_code;
   if (code === undefined || code === 0) return;
-  const msg = formatMiniMaxErrorMessage(data.base_resp?.status_msg || `未知错误`, code);
+  const msg = formatMiniMaxErrorMessage(
+    data.base_resp?.status_msg ?? '未知错误',
+    code,
+    labelToFeature(label),
+  );
   throw new Error(`${label}：${msg}`);
 }
 
 async function minimaxFetch(url: string, init: RequestInit, label: string): Promise<Response> {
   const method = init.method ?? 'GET';
+  const feature = labelToFeature(label);
   logMiniMax(`${label} request`, { url, method });
 
   let response: Response;
@@ -151,12 +204,19 @@ async function minimaxFetch(url: string, init: RequestInit, label: string): Prom
     try {
       const parsed = JSON.parse(text) as {
         base_resp?: MiniMaxBaseResp;
-        error?: string;
+        error?: unknown;
+        message?: unknown;
       };
-      if (parsed.base_resp?.status_msg) {
-        detail = formatMiniMaxErrorMessage(parsed.base_resp.status_msg, parsed.base_resp.status_code);
-      } else if (parsed.error) {
-        detail = parsed.error;
+      if (parsed.base_resp?.status_msg != null || parsed.base_resp?.status_code) {
+        detail = formatMiniMaxErrorMessage(
+          parsed.base_resp.status_msg ?? '未知错误',
+          parsed.base_resp.status_code,
+          feature,
+        );
+      } else if (parsed.error != null) {
+        detail = formatMiniMaxErrorMessage(parsed.error, undefined, feature);
+      } else if (parsed.message != null) {
+        detail = formatMiniMaxErrorMessage(parsed.message, undefined, feature);
       }
     } catch {
       /* 非 JSON 则保留原文 */
@@ -353,7 +413,13 @@ export async function createChatCompletion(params: ChatCompletionParams): Promis
   const data = parseJsonBody<{
     choices?: Array<{ message?: { content?: string } }>;
     base_resp?: MiniMaxBaseResp;
+    error?: unknown;
   }>(await response.text(), '知识问答');
+
+  const apiError = normalizeApiErrorDetail(data.error);
+  if (apiError) {
+    throw new Error(`知识问答：${formatMiniMaxErrorMessage(apiError, undefined, 'chat')}`);
+  }
   assertBaseResp(data, '知识问答');
 
   const content = data.choices?.[0]?.message?.content;

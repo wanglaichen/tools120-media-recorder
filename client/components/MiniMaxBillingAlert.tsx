@@ -1,15 +1,23 @@
 'use client';
 
 import { AlertCircle, ExternalLink, Wallet } from 'lucide-react';
-import { buildMiniMaxBillingAlert } from '@/lib/minimax-errors';
+import {
+  buildMiniMaxBillingAlert,
+  type MiniMaxFeature,
+} from '@/lib/minimax-errors';
 
 type Props = {
   error: unknown;
   featureLabel?: string;
+  feature?: MiniMaxFeature;
 };
 
-export function MiniMaxBillingAlert({ error, featureLabel = '当前功能' }: Props) {
-  const alert = buildMiniMaxBillingAlert(error);
+export function MiniMaxBillingAlert({
+  error,
+  featureLabel = '当前功能',
+  feature = 'video',
+}: Props) {
+  const alert = buildMiniMaxBillingAlert(error, feature);
   if (!alert) return null;
 
   const Icon = alert.kind === 'balance' ? Wallet : AlertCircle;

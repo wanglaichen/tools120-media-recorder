@@ -334,8 +334,8 @@ export function VideoGen() {
           {/* 费用 / 额度不足 */}
           {error && (
             <>
-              <MiniMaxBillingAlert error={error} featureLabel="文字转视频" />
-              {!buildMiniMaxBillingAlert(error) && (
+              <MiniMaxBillingAlert error={error} featureLabel="文字转视频" feature="video" />
+              {!buildMiniMaxBillingAlert(error, 'video') && (
                 <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-500">
                   <AlertCircle size={15} className="mt-0.5 shrink-0" />
                   <span>{error}</span>

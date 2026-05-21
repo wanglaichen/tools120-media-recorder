@@ -64,6 +64,37 @@ type WebAudioWindow = Window &
     webkitAudioContext?: typeof AudioContext;
   };
 
+const ACTIVE_PAGE_STORAGE_KEY = 'tools120-media-recorder.active-page';
+
+const isPageKey = (value: string | null): value is PageKey =>
+  value === 'capture' || value === 'convert' || value === 'video' || value === 'image' || value === 'chat';
+
+const trimSlash = (value: string) => value.replace(/\/+$/, '');
+
+const resolveUiStateUrl = () => {
+  const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (apiOrigin?.startsWith('http://') || apiOrigin?.startsWith('https://')) {
+    return `${trimSlash(apiOrigin)}/api/ui-state`;
+  }
+  return '/api/ui-state';
+};
+
+const fetchActivePageMemory = async (): Promise<PageKey | null> => {
+  const response = await fetch(resolveUiStateUrl(), { cache: 'no-store' });
+  if (!response.ok) throw new Error(`读取页签记忆失败：HTTP ${response.status}`);
+  const data = (await response.json()) as { activePage?: unknown };
+  return typeof data.activePage === 'string' && isPageKey(data.activePage) ? data.activePage : null;
+};
+
+const saveActivePageMemory = async (activePage: PageKey) => {
+  const response = await fetch(resolveUiStateUrl(), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ activePage }),
+  });
+  if (!response.ok) throw new Error(`保存页签记忆失败：HTTP ${response.status}`);
+};
+
 const entryToClip = (entry: RecordingEntry, blob: Blob | null = null): RecordingClip => ({
   id: entry.id,
   displayName: entry.displayName,
@@ -188,6 +219,7 @@ const getErrorMessage = (error: unknown, fallback: string) => {
 
 export default function HomePage() {
   const [activePage, setActivePage] = useState<PageKey>('capture');
+  const [activePageMemoryReady, setActivePageMemoryReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [status, setStatus] = useState<RecorderStatus>('idle');
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('idle');
@@ -231,6 +263,53 @@ export default function HomePage() {
   const selectedAudioUrlRef = useRef('');
   const transcriberRef = useRef<AutomaticSpeechRecognitionPipeline | null>(null);
   const loadedModelIdRef = useRef<WhisperModelId | null>(null);
+  const activePageTouchedRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const savedPage = await fetchActivePageMemory();
+        if (!cancelled && savedPage && !activePageTouchedRef.current) {
+          setActivePage(savedPage);
+        }
+      } catch {
+        try {
+          const savedPage = window.localStorage.getItem(ACTIVE_PAGE_STORAGE_KEY);
+          if (!cancelled && isPageKey(savedPage) && !activePageTouchedRef.current) {
+            setActivePage(savedPage);
+          }
+        } catch {
+          // localStorage can be unavailable in private browsing or restricted webviews.
+        }
+      } finally {
+        if (!cancelled) {
+          setActivePageMemoryReady(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activePageMemoryReady) return;
+    void saveActivePageMemory(activePage).catch(() => {
+      try {
+        window.localStorage.setItem(ACTIVE_PAGE_STORAGE_KEY, activePage);
+      } catch {
+        // Keep navigation usable even when persistence is blocked.
+      }
+    });
+  }, [activePage, activePageMemoryReady]);
+
+  const handleActivePageSelect = (page: PageKey) => {
+    activePageTouchedRef.current = true;
+    setActivePage(page);
+  };
 
   const canRecord = status === 'idle' || status === 'ready' || status === 'stopped' || status === 'error';
   const canPause = status === 'recording' && mediaRecorderRef.current?.state === 'recording';
@@ -849,7 +928,7 @@ export default function HomePage() {
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <div className="flex w-full">
-        <AppSidebar items={pages} activeKey={activePage} onSelect={setActivePage} />
+        <AppSidebar items={pages} activeKey={activePage} onSelect={handleActivePageSelect} />
 
         <div className="mx-auto min-w-0 w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
           {activePage === 'capture' ? (
