@@ -42,7 +42,6 @@ import {
 } from '@/lib/recordings';
 import { RecordingList } from '@/components/RecordingList';
 import { RecordingPickerModal } from '@/components/RecordingPickerModal';
-import { ServiceInfoBar } from '@/components/ServiceInfoBar';
 import { AppSidebar, type AppPageKey } from '@/components/AppSidebar';
 import { SettingsDialog } from '@/components/SettingsDialog';
 import { ImageGen } from '@/components/ImageGen';
@@ -819,7 +818,6 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <ServiceInfoBar />
       <div className="border-b border-border bg-card">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="flex items-center gap-3">

@@ -19,9 +19,13 @@ import {
   createEmptySession,
   createMessage,
   deriveSessionTitle,
-  loadChatSessions,
-  saveChatSessions,
+  loadChatWorkspace,
+  pickActiveSessionId,
+  pollChatWorkspace,
+  saveChatWorkspace,
   type ChatSession,
+  type ChatStorageMode,
+  type ChatWorkspacePayload,
 } from '@/lib/chat-storage';
 
 const MODEL_OPTIONS: { value: ChatModel; label: string }[] = [
@@ -33,6 +37,8 @@ const MODEL_OPTIONS: { value: ChatModel; label: string }[] = [
 
 const SYSTEM_PROMPT =
   '你是一个专业的知识问答助手。请用清晰、准确的中文回答用户问题；若不确定请如实说明，不要编造事实。';
+
+const CHAT_POLL_MS = 2000;
 
 function toApiMessages(session: ChatSession): ChatTurn[] {
   return [
@@ -53,22 +59,61 @@ export function KnowledgeChat() {
   const [error, setError] = useState('');
   const [hydrated, setHydrated] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [syncMode, setSyncMode] = useState<ChatStorageMode>('local');
+  const [serverRevision, setServerRevision] = useState('');
+  const [syncError, setSyncError] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const revisionRef = useRef('');
+  const activeIdRef = useRef('');
+  const modelRef = useRef<ChatModel>('MiniMax-M2.7');
+  const savingRef = useRef(false);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingPersistRef = useRef<ChatWorkspacePayload | null>(null);
+  const saveFailStreakRef = useRef(0);
+
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+
+  useEffect(() => {
+    modelRef.current = model;
+  }, [model]);
+
+  useEffect(() => {
+    revisionRef.current = serverRevision;
+  }, [serverRevision]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const loaded = await loadChatSessions();
+      const snapshot = await loadChatWorkspace();
       if (cancelled) return;
-      if (loaded.length === 0) {
+      setSyncMode(snapshot.mode);
+      setServerRevision(snapshot.revision);
+      revisionRef.current = snapshot.revision;
+      setModel(snapshot.chatModel);
+      modelRef.current = snapshot.chatModel;
+      if (snapshot.sessions.length === 0) {
         const first = createEmptySession();
         setSessions([first]);
         setActiveId(first.id);
-        void saveChatSessions([first]);
+        activeIdRef.current = first.id;
+        const saved = await saveChatWorkspace({
+          sessions: [first],
+          activeSessionId: first.id,
+          chatModel: snapshot.chatModel,
+        });
+        if (!cancelled) {
+          setSyncMode(saved.mode);
+          setServerRevision(saved.revision);
+          revisionRef.current = saved.revision;
+        }
       } else {
-        setSessions(loaded);
-        setActiveId(loaded[0].id);
+        setSessions(snapshot.sessions);
+        const active = pickActiveSessionId(snapshot.activeSessionId, snapshot.sessions);
+        setActiveId(active);
+        activeIdRef.current = active;
       }
       setHydrated(true);
     })();
@@ -77,18 +122,114 @@ export function KnowledgeChat() {
     };
   }, []);
 
-  const persist = useCallback((next: ChatSession[]) => {
-    setSessions(next);
-    void saveChatSessions(next);
+  useEffect(() => {
+    if (!hydrated || syncMode !== 'server') return;
+    const timer = window.setInterval(() => {
+      if (loading || savingRef.current) return;
+      void (async () => {
+        const remote = await pollChatWorkspace(revisionRef.current);
+        if (!remote) return;
+        revisionRef.current = remote.revision;
+        setServerRevision(remote.revision);
+        setSessions(remote.sessions);
+        const active = pickActiveSessionId(remote.activeSessionId, remote.sessions);
+        setActiveId(active);
+        activeIdRef.current = active;
+        setModel(remote.chatModel);
+        modelRef.current = remote.chatModel;
+        setSyncMode('server');
+        saveFailStreakRef.current = 0;
+        setSyncError('');
+      })();
+    }, CHAT_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [hydrated, syncMode, loading]);
+
+  const flushPersist = useCallback(async () => {
+    const next = pendingPersistRef.current;
+    if (!next) return;
+    pendingPersistRef.current = null;
+    savingRef.current = true;
+    try {
+      let saved = await saveChatWorkspace(next);
+      if (saved.mode !== 'server') {
+        await new Promise((r) => setTimeout(r, 400));
+        saved = await saveChatWorkspace(next);
+      }
+      setSyncMode(saved.mode);
+      setServerRevision(saved.revision);
+      revisionRef.current = saved.revision;
+      if (saved.mode === 'server') {
+        saveFailStreakRef.current = 0;
+        setSyncError('');
+      } else {
+        saveFailStreakRef.current += 1;
+        if (saveFailStreakRef.current >= 2) {
+          setSyncError(
+            '暂时无法同步到 API（请确认已运行 start.ps1 / 8787 端口）。会话已缓存在本机，恢复连接后会自动重试。',
+          );
+        }
+      }
+    } catch (err) {
+      saveFailStreakRef.current += 1;
+      if (saveFailStreakRef.current >= 2) {
+        setSyncError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      savingRef.current = false;
+    }
   }, []);
 
-  const patchSession = useCallback((id: string, updater: (s: ChatSession) => ChatSession) => {
-    setSessions((prev) => {
-      const next = prev.map((s) => (s.id === id ? updater(s) : s));
-      void saveChatSessions(next);
-      return next;
-    });
-  }, []);
+  const scheduleWorkspacePersist = useCallback(
+    (
+      nextSessions: ChatSession[],
+      overrides?: Partial<Pick<ChatWorkspacePayload, 'activeSessionId' | 'chatModel'>>,
+    ) => {
+      setSessions(nextSessions);
+      pendingPersistRef.current = {
+        sessions: nextSessions,
+        activeSessionId: pickActiveSessionId(
+          overrides?.activeSessionId ?? activeIdRef.current,
+          nextSessions,
+        ),
+        chatModel: overrides?.chatModel ?? modelRef.current,
+      };
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = setTimeout(() => {
+        persistTimerRef.current = null;
+        void flushPersist();
+      }, 400);
+    },
+    [flushPersist],
+  );
+
+  const selectSession = useCallback(
+    (id: string) => {
+      setActiveId(id);
+      activeIdRef.current = id;
+      setError('');
+      scheduleWorkspacePersist(sessions, { activeSessionId: id });
+    },
+    [sessions, scheduleWorkspacePersist],
+  );
+
+  useEffect(
+    () => () => {
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    },
+    [],
+  );
+
+  const patchSession = useCallback(
+    (id: string, updater: (s: ChatSession) => ChatSession) => {
+      setSessions((prev) => {
+        const next = prev.map((s) => (s.id === id ? updater(s) : s));
+        scheduleWorkspacePersist(next);
+        return next;
+      });
+    },
+    [scheduleWorkspacePersist],
+  );
 
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeId) ?? null,
@@ -104,8 +245,9 @@ export function KnowledgeChat() {
   const newSession = () => {
     const session = createEmptySession();
     const next = [session, ...sessions];
-    persist(next);
     setActiveId(session.id);
+    activeIdRef.current = session.id;
+    scheduleWorkspacePersist(next, { activeSessionId: session.id });
     setInput('');
     setError('');
     inputRef.current?.focus();
@@ -115,11 +257,15 @@ export function KnowledgeChat() {
     const next = sessions.filter((s) => s.id !== id);
     if (next.length === 0) {
       const session = createEmptySession();
-      persist([session]);
       setActiveId(session.id);
+      activeIdRef.current = session.id;
+      scheduleWorkspacePersist([session], { activeSessionId: session.id });
     } else {
-      persist(next);
-      if (activeId === id) setActiveId(next[0].id);
+      const nextActive =
+        activeId === id ? pickActiveSessionId(next[0].id, next) : activeId;
+      setActiveId(nextActive);
+      activeIdRef.current = nextActive;
+      scheduleWorkspacePersist(next, { activeSessionId: nextActive });
     }
     setError('');
   };
@@ -136,10 +282,19 @@ export function KnowledgeChat() {
     setClearing(true);
     setError('');
     try {
-      await clearAllChatSessions();
+      const cleared = await clearAllChatSessions();
+      setSyncMode(cleared.mode);
+      setServerRevision(cleared.revision);
+      revisionRef.current = cleared.revision;
       const session = createEmptySession();
-      persist([session]);
       setActiveId(session.id);
+      activeIdRef.current = session.id;
+      await saveChatWorkspace({
+        sessions: [session],
+        activeSessionId: session.id,
+        chatModel: modelRef.current,
+      });
+      setSessions([session]);
       setInput('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -246,10 +401,7 @@ export function KnowledgeChat() {
               >
                 <button
                   type="button"
-                  onClick={() => {
-                    setActiveId(s.id);
-                    setError('');
-                  }}
+                  onClick={() => selectSession(s.id)}
                   className="min-w-0 flex-1 px-3 py-2.5 text-left"
                 >
                   <span
@@ -284,11 +436,31 @@ export function KnowledgeChat() {
             <MessageSquare size={18} className="text-primary" />
             <h2 className="text-sm font-semibold">{activeSession?.title ?? '知识问答'}</h2>
           </div>
+          <div className="flex flex-wrap items-center gap-3">
+          <span
+            className={`text-[10px] ${
+              syncMode === 'server'
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : 'text-amber-600 dark:text-amber-400'
+            }`}
+            title={
+              syncMode === 'server'
+                ? '已连接 API，其他浏览器约 2 秒内同步'
+                : '请启动 API 服务（8787）或检查 NEXT_PUBLIC_API_BASE_URL'
+            }
+          >
+            {syncMode === 'server' ? '● 服务器同步' : '○ 仅本机'}
+          </span>
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             模型
             <select
               value={model}
-              onChange={(e) => setModel(e.target.value as ChatModel)}
+              onChange={(e) => {
+                const next = e.target.value as ChatModel;
+                setModel(next);
+                modelRef.current = next;
+                scheduleWorkspacePersist(sessions, { chatModel: next });
+              }}
               disabled={loading}
               className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
             >
@@ -299,6 +471,7 @@ export function KnowledgeChat() {
               ))}
             </select>
           </label>
+          </div>
         </div>
 
         <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
@@ -337,10 +510,16 @@ export function KnowledgeChat() {
           )}
         </div>
 
-        {error && (
+        {(syncError || error) && (
           <div className="mx-4 mb-2 space-y-2">
+            {syncError && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+                <AlertCircle size={15} className="mt-0.5 shrink-0" />
+                <span>{syncError}</span>
+              </div>
+            )}
             <MiniMaxBillingAlert error={error} featureLabel="知识问答" />
-            {!buildMiniMaxBillingAlert(error) && (
+            {error && !buildMiniMaxBillingAlert(error) && (
               <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-500">
                 <AlertCircle size={15} className="mt-0.5 shrink-0" />
                 <span>{error}</span>
@@ -372,7 +551,9 @@ export function KnowledgeChat() {
             </button>
           </div>
           <p className="mt-2 text-[10px] text-muted-foreground/70">
-            会话保存在 API 服务器，任意浏览器/电脑刷新后仍可见；点左侧「清理全部」可删除全部历史。
+            {syncMode === 'server'
+              ? '会话、左侧选中项与模型均保存在 API，多浏览器约 2 秒同步；重新打开会恢复上次状态。'
+              : '未连接 API：请运行 start.ps1。仅本机浏览器可看到记录。'}
           </p>
         </div>
       </div>

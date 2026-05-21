@@ -4,7 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import multer from 'multer';
 import { attachMiniMaxProxy } from './minimaxProxy.mjs';
-import { attachChatSessions } from './chatSessions.mjs';
+import {
+  attachChatSessions,
+  createFileChatStore,
+  createMemoryChatStore,
+} from './chatSessions.mjs';
 
 const defaultManifest = () => ({
   version: 1,
@@ -149,7 +153,9 @@ export function createApiApp(opts) {
   router.use(minimaxRouter);
 
   if (opts.chatSessionsPath) {
-    attachChatSessions(router, opts.chatSessionsPath);
+    attachChatSessions(router, createFileChatStore(opts.chatSessionsPath));
+  } else if (opts.storage === 'memory') {
+    attachChatSessions(router, createMemoryChatStore());
   }
 
   router.get('/health', (req, res) => {
