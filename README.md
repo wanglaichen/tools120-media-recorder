@@ -136,9 +136,12 @@ git push origin v1.1.1
 **打 Tag 自动构建并发布：**
 
 ```bash
-git tag v1.1.1
-git push origin v1.1.1   # 只推一次 tag；勿先 push 再 tag -f --force，否则会触发两次 CI（已用 concurrency 合并为一次）
+# 推荐：只推送一次 tag（避免 CI 跑两遍）
+bash scripts/release-tag.sh v1.1.1
+# Windows: .\scripts\release-tag.ps1 v1.1.1
 ```
+
+勿使用 `git tag -f` 后再 `git push --force`：会先跑完一次 CI（如 #53），再触发第二次（如 #54）。
 
 **首次在 GitHub 启用（只做一次）：**
 

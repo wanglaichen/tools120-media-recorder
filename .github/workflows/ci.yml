@@ -1,15 +1,14 @@
 name: CI/CD
 
-# 仅在推送语义化版本 Tag（v1.2.3 / v1.0.0-beta.1）时触发
+# 仅在推送语义化版本 Tag 时触发（勿 push main / PR）
 on:
   push:
     tags:
-      - 'v*.*.*'
-      - 'v*.*.*-*'
+      - 'v*'
 
-# 同一 tag 重复 push / force-push 时只保留最后一次，避免 #51 #52 双跑
+# force-push 同一 tag 时取消未完成的重复运行（已完成的 #53 无法撤回）
 concurrency:
-  group: cicd-release-${{ github.ref }}
+  group: cicd-release-${{ github.ref_name }}
   cancel-in-progress: true
 
 env:
