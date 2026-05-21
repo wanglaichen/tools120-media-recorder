@@ -9,10 +9,12 @@ const ALLOWED_MODELS = new Set([
   'MiniMax-M2.5-highspeed',
 ]);
 
-/** @type {{ version: number; updatedAt: string; sessions: unknown[]; activeSessionId: string; chatModel: string }} */
+/** @type {{ version: number; updatedAt: string; workspaceSeq: number; uiRevision: number; sessions: unknown[]; activeSessionId: string; chatModel: string }} */
 let memoryPayload = {
-  version: 2,
+  version: 3,
   updatedAt: '',
+  workspaceSeq: 0,
+  uiRevision: 0,
   sessions: [],
   activeSessionId: '',
   chatModel: 'MiniMax-M2.7',
@@ -20,6 +22,13 @@ let memoryPayload = {
 
 function ensureDir(filePath) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
+}
+
+function sessionRevision(s) {
+  const r = Number(s?.revision);
+  if (Number.isFinite(r) && r > 0) return r;
+  const t = Number(s?.updatedAt);
+  return Number.isFinite(t) && t > 0 ? t : 0;
 }
 
 function sanitizeSessions(raw) {
@@ -45,12 +54,14 @@ function sanitizeSessions(raw) {
           })
           .filter(Boolean)
       : [];
+    const updatedAt = Number(s.updatedAt) || Date.now();
     return {
       id,
       title: typeof s.title === 'string' ? s.title.slice(0, 120) : '新对话',
       messages,
-      createdAt: Number(s.createdAt) || Date.now(),
-      updatedAt: Number(s.updatedAt) || Date.now(),
+      createdAt: Number(s.createdAt) || updatedAt,
+      updatedAt,
+      revision: sessionRevision({ ...s, updatedAt }),
     };
   }).filter(Boolean);
   return sessions;
@@ -68,11 +79,52 @@ function sanitizeModel(raw) {
   return 'MiniMax-M2.7';
 }
 
-function normalizeWriteBody(body) {
-  const sessions = sanitizeSessions(body?.sessions);
+function mergeMessageLists(a, b) {
+  const byId = new Map();
+  for (const m of a) byId.set(m.id, m);
+  for (const m of b) byId.set(m.id, m);
+  return [...byId.values()].sort((x, y) => x.createdAt - y.createdAt);
+}
+
+/** 同 id 会话：合并消息列表，避免后写入覆盖先写入 */
+function mergeTwoSessions(stored, incoming) {
+  const messages = mergeMessageLists(stored.messages, incoming.messages);
+  const storedRev = sessionRevision(stored);
+  const incomingRev = sessionRevision(incoming);
+  const hadNewFromIncoming = incoming.messages.some((m) => !stored.messages.some((x) => x.id === m.id));
+  const hadNewFromStored = stored.messages.some((m) => !incoming.messages.some((x) => x.id === m.id));
+  return {
+    id: stored.id,
+    title: incomingRev >= storedRev ? incoming.title : stored.title,
+    messages,
+    createdAt: Math.min(stored.createdAt, incoming.createdAt),
+    updatedAt: Math.max(stored.updatedAt, incoming.updatedAt, Date.now()),
+    revision:
+      Math.max(storedRev, incomingRev) + (hadNewFromIncoming && hadNewFromStored ? 1 : 0),
+  };
+}
+
+function mergeSessionLists(stored, incoming) {
+  const map = new Map();
+  for (const s of stored) map.set(s.id, s);
+  for (const s of incoming) {
+    const prev = map.get(s.id);
+    map.set(s.id, prev ? mergeTwoSessions(prev, s) : s);
+  }
+  return [...map.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function normalizeWriteBody(body, storedSessions = []) {
+  const incoming = sanitizeSessions(body?.sessions);
+  const sessions =
+    storedSessions.length > 0
+      ? mergeSessionLists(sanitizeSessions(storedSessions), incoming)
+      : incoming;
   const activeSessionId = pickActiveSessionId(body?.activeSessionId, sessions);
   const chatModel = sanitizeModel(body?.chatModel);
-  return { sessions, activeSessionId, chatModel };
+  const workspaceSeq = Math.max(0, Number(body?.workspaceSeq) || 0);
+  const uiRevision = Math.max(0, Number(body?.uiRevision) || 0);
+  return { sessions, activeSessionId, chatModel, workspaceSeq, uiRevision };
 }
 
 function toReadResponse(payload) {
@@ -80,19 +132,23 @@ function toReadResponse(payload) {
   return {
     sessions,
     revision: payload.updatedAt || '',
+    workspaceSeq: Math.max(0, Number(payload.workspaceSeq) || 0),
+    uiRevision: Math.max(0, Number(payload.uiRevision) || 0),
     activeSessionId: pickActiveSessionId(payload.activeSessionId, sessions),
     chatModel: sanitizeModel(payload.chatModel),
   };
 }
 
-function buildPayload({ sessions, activeSessionId, chatModel }) {
-  const safeSessions = sanitizeSessions(sessions);
+function buildPayload(body) {
+  const safeSessions = sanitizeSessions(body.sessions);
   return {
-    version: 2,
+    version: 3,
     updatedAt: new Date().toISOString(),
+    workspaceSeq: Math.max(0, Number(body.workspaceSeq) || 0),
+    uiRevision: Math.max(0, Number(body.uiRevision) || 0),
     sessions: safeSessions,
-    activeSessionId: pickActiveSessionId(activeSessionId, safeSessions),
-    chatModel: sanitizeModel(chatModel),
+    activeSessionId: pickActiveSessionId(body.activeSessionId, safeSessions),
+    chatModel: sanitizeModel(body.chatModel),
   };
 }
 
@@ -100,7 +156,13 @@ function buildPayload({ sessions, activeSessionId, chatModel }) {
 export function createFileChatStore(filePath) {
   const readRaw = () => {
     if (!fs.existsSync(filePath)) {
-      return buildPayload({ sessions: [], activeSessionId: '', chatModel: 'MiniMax-M2.7' });
+      return buildPayload({
+        sessions: [],
+        activeSessionId: '',
+        chatModel: 'MiniMax-M2.7',
+        workspaceSeq: 0,
+        uiRevision: 0,
+      });
     }
     try {
       const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -108,9 +170,17 @@ export function createFileChatStore(filePath) {
         sessions: parsed.sessions,
         activeSessionId: parsed.activeSessionId,
         chatModel: parsed.chatModel,
+        workspaceSeq: parsed.workspaceSeq,
+        uiRevision: parsed.uiRevision,
       });
     } catch {
-      return buildPayload({ sessions: [], activeSessionId: '', chatModel: 'MiniMax-M2.7' });
+      return buildPayload({
+        sessions: [],
+        activeSessionId: '',
+        chatModel: 'MiniMax-M2.7',
+        workspaceSeq: 0,
+        uiRevision: 0,
+      });
     }
   };
 
@@ -119,13 +189,21 @@ export function createFileChatStore(filePath) {
       return toReadResponse(readRaw());
     },
     write(body) {
-      const payload = buildPayload(body);
+      const stored = sanitizeSessions(readRaw().sessions);
+      const normalized = normalizeWriteBody(body, stored);
+      const payload = buildPayload(normalized);
       ensureDir(filePath);
       fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
       return payload.updatedAt;
     },
     clear() {
-      return this.write({ sessions: [], activeSessionId: '', chatModel: 'MiniMax-M2.7' });
+      return this.write({
+        sessions: [],
+        activeSessionId: '',
+        chatModel: 'MiniMax-M2.7',
+        workspaceSeq: 0,
+        uiRevision: 0,
+      });
     },
   };
 }
@@ -136,11 +214,19 @@ export function createMemoryChatStore() {
       return toReadResponse(memoryPayload);
     },
     write(body) {
-      memoryPayload = buildPayload(body);
+      const stored = sanitizeSessions(memoryPayload.sessions);
+      const normalized = normalizeWriteBody(body, stored);
+      memoryPayload = buildPayload(normalized);
       return memoryPayload.updatedAt;
     },
     clear() {
-      return this.write({ sessions: [], activeSessionId: '', chatModel: 'MiniMax-M2.7' });
+      return this.write({
+        sessions: [],
+        activeSessionId: '',
+        chatModel: 'MiniMax-M2.7',
+        workspaceSeq: 0,
+        uiRevision: 0,
+      });
     },
   };
 }
@@ -153,8 +239,8 @@ export function attachChatSessions(router, store) {
   });
 
   router.put('/chat/sessions', (req, res) => {
-    const body = normalizeWriteBody(req.body);
-    const revision = store.write(body);
+    const revision = store.write(req.body);
+    const body = store.read();
     res.json({ ok: true, ...body, revision });
   });
 
@@ -165,6 +251,8 @@ export function attachChatSessions(router, store) {
       sessions: [],
       activeSessionId: '',
       chatModel: 'MiniMax-M2.7',
+      workspaceSeq: 0,
+      uiRevision: 0,
       revision,
     });
   });

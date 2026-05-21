@@ -46,12 +46,6 @@ export function ServiceInfoBar() {
       data-build-id={buildId}
     >
       <p className="min-w-0 flex-1 truncate text-xs leading-snug text-muted-foreground">
-        <span className="font-mono text-foreground/80">v{appVersion}</span>
-        <span className="mx-1.5 text-border">·</span>
-        <span className="font-mono" title={`构建标识 ${buildId}`}>
-          {buildId}
-        </span>
-        <span className="mx-1.5 text-border">·</span>
         <span className="text-muted-foreground/80">前端</span>{' '}
         <span className="font-mono text-foreground/70">{frontendOrigin}</span>
         <span className="mx-1.5 text-border">·</span>
@@ -64,6 +58,14 @@ export function ServiceInfoBar() {
         <span className="text-muted-foreground/80">IP</span>{' '}
         <span className="font-mono text-foreground/70">{serverIp}</span>
       </p>
+      <span
+        className="shrink-0 font-mono text-[10px] leading-none text-muted-foreground"
+        title={`构建标识 ${buildId}`}
+      >
+        v{appVersion}
+        <span className="mx-1 text-border">·</span>
+        {buildId}
+      </span>
     </div>
   );
 }

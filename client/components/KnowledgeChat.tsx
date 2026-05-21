@@ -15,11 +15,13 @@ import { MiniMaxBillingAlert } from '@/components/MiniMaxBillingAlert';
 import { createChatCompletion, type ChatModel, type ChatTurn } from '@/lib/minimax';
 import { buildMiniMaxBillingAlert } from '@/lib/minimax-errors';
 import {
+  bumpSession,
   clearAllChatSessions,
   createEmptySession,
   createMessage,
   deriveSessionTitle,
   loadChatWorkspace,
+  mergeSessionWithRemoteBeforeSend,
   pickActiveSessionId,
   pollChatWorkspace,
   saveChatWorkspace,
@@ -70,7 +72,14 @@ export function KnowledgeChat() {
   const savingRef = useRef(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingPersistRef = useRef<ChatWorkspacePayload | null>(null);
+  const sessionsRef = useRef<ChatSession[]>([]);
+  const workspaceSeqRef = useRef(0);
+  const uiRevisionRef = useRef(0);
   const saveFailStreakRef = useRef(0);
+
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -94,8 +103,11 @@ export function KnowledgeChat() {
       revisionRef.current = snapshot.revision;
       setModel(snapshot.chatModel);
       modelRef.current = snapshot.chatModel;
+      workspaceSeqRef.current = snapshot.workspaceSeq;
+      uiRevisionRef.current = snapshot.uiRevision;
       if (snapshot.sessions.length === 0) {
         const first = createEmptySession();
+        workspaceSeqRef.current += 1;
         setSessions([first]);
         setActiveId(first.id);
         activeIdRef.current = first.id;
@@ -103,11 +115,15 @@ export function KnowledgeChat() {
           sessions: [first],
           activeSessionId: first.id,
           chatModel: snapshot.chatModel,
+          workspaceSeq: workspaceSeqRef.current,
+          uiRevision: uiRevisionRef.current,
         });
         if (!cancelled) {
           setSyncMode(saved.mode);
           setServerRevision(saved.revision);
           revisionRef.current = saved.revision;
+          workspaceSeqRef.current = saved.workspaceSeq;
+          uiRevisionRef.current = saved.uiRevision;
         }
       } else {
         setSessions(snapshot.sessions);
@@ -122,28 +138,27 @@ export function KnowledgeChat() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!hydrated || syncMode !== 'server') return;
-    const timer = window.setInterval(() => {
-      if (loading || savingRef.current) return;
-      void (async () => {
-        const remote = await pollChatWorkspace(revisionRef.current);
-        if (!remote) return;
-        revisionRef.current = remote.revision;
-        setServerRevision(remote.revision);
-        setSessions(remote.sessions);
-        const active = pickActiveSessionId(remote.activeSessionId, remote.sessions);
-        setActiveId(active);
-        activeIdRef.current = active;
-        setModel(remote.chatModel);
-        modelRef.current = remote.chatModel;
-        setSyncMode('server');
-        saveFailStreakRef.current = 0;
-        setSyncError('');
-      })();
-    }, CHAT_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [hydrated, syncMode, loading]);
+  const getLocalWorkspacePayload = useCallback((): ChatWorkspacePayload => {
+    if (pendingPersistRef.current) return pendingPersistRef.current;
+    return {
+      sessions: sessionsRef.current,
+      activeSessionId: activeIdRef.current,
+      chatModel: modelRef.current,
+      workspaceSeq: workspaceSeqRef.current,
+      uiRevision: uiRevisionRef.current,
+    };
+  }, []);
+
+  const applyWorkspacePayload = useCallback((payload: ChatWorkspacePayload) => {
+    setSessions(payload.sessions);
+    const active = pickActiveSessionId(payload.activeSessionId, payload.sessions);
+    setActiveId(active);
+    activeIdRef.current = active;
+    setModel(payload.chatModel);
+    modelRef.current = payload.chatModel;
+    workspaceSeqRef.current = payload.workspaceSeq;
+    uiRevisionRef.current = payload.uiRevision;
+  }, []);
 
   const flushPersist = useCallback(async () => {
     const next = pendingPersistRef.current;
@@ -159,6 +174,8 @@ export function KnowledgeChat() {
       setSyncMode(saved.mode);
       setServerRevision(saved.revision);
       revisionRef.current = saved.revision;
+      workspaceSeqRef.current = saved.workspaceSeq;
+      uiRevisionRef.current = saved.uiRevision;
       if (saved.mode === 'server') {
         saveFailStreakRef.current = 0;
         setSyncError('');
@@ -183,8 +200,16 @@ export function KnowledgeChat() {
   const scheduleWorkspacePersist = useCallback(
     (
       nextSessions: ChatSession[],
-      overrides?: Partial<Pick<ChatWorkspacePayload, 'activeSessionId' | 'chatModel'>>,
+      overrides?: Partial<
+        Pick<ChatWorkspacePayload, 'activeSessionId' | 'chatModel' | 'uiRevision'>
+      >,
     ) => {
+      workspaceSeqRef.current += 1;
+      if (overrides?.uiRevision !== undefined) {
+        uiRevisionRef.current = overrides.uiRevision;
+      } else if (overrides?.activeSessionId !== undefined || overrides?.chatModel !== undefined) {
+        uiRevisionRef.current += 1;
+      }
       setSessions(nextSessions);
       pendingPersistRef.current = {
         sessions: nextSessions,
@@ -193,6 +218,8 @@ export function KnowledgeChat() {
           nextSessions,
         ),
         chatModel: overrides?.chatModel ?? modelRef.current,
+        workspaceSeq: workspaceSeqRef.current,
+        uiRevision: uiRevisionRef.current,
       };
       if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
       persistTimerRef.current = setTimeout(() => {
@@ -203,14 +230,45 @@ export function KnowledgeChat() {
     [flushPersist],
   );
 
+  useEffect(() => {
+    if (!hydrated || syncMode !== 'server') return;
+    const timer = window.setInterval(() => {
+      if (loading || savingRef.current || persistTimerRef.current || pendingPersistRef.current) {
+        return;
+      }
+      void (async () => {
+        const result = await pollChatWorkspace(
+          revisionRef.current,
+          getLocalWorkspacePayload(),
+        );
+        if (!result) return;
+        revisionRef.current = result.remote.revision;
+        setServerRevision(result.remote.revision);
+        applyWorkspacePayload(result.merged);
+        setSyncMode('server');
+        saveFailStreakRef.current = 0;
+        setSyncError('');
+        if (result.localWins) {
+          pendingPersistRef.current = result.merged;
+          if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+          persistTimerRef.current = setTimeout(() => {
+            persistTimerRef.current = null;
+            void flushPersist();
+          }, 400);
+        }
+      })();
+    }, CHAT_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [hydrated, syncMode, loading, getLocalWorkspacePayload, applyWorkspacePayload, flushPersist]);
+
   const selectSession = useCallback(
     (id: string) => {
       setActiveId(id);
       activeIdRef.current = id;
       setError('');
-      scheduleWorkspacePersist(sessions, { activeSessionId: id });
+      scheduleWorkspacePersist(sessionsRef.current, { activeSessionId: id });
     },
-    [sessions, scheduleWorkspacePersist],
+    [scheduleWorkspacePersist],
   );
 
   useEffect(
@@ -244,9 +302,10 @@ export function KnowledgeChat() {
 
   const newSession = () => {
     const session = createEmptySession();
-    const next = [session, ...sessions];
+    const next = [session, ...sessionsRef.current];
     setActiveId(session.id);
     activeIdRef.current = session.id;
+    uiRevisionRef.current += 1;
     scheduleWorkspacePersist(next, { activeSessionId: session.id });
     setInput('');
     setError('');
@@ -289,10 +348,13 @@ export function KnowledgeChat() {
       const session = createEmptySession();
       setActiveId(session.id);
       activeIdRef.current = session.id;
+      workspaceSeqRef.current += 1;
       await saveChatWorkspace({
         sessions: [session],
         activeSessionId: session.id,
         chatModel: modelRef.current,
+        workspaceSeq: workspaceSeqRef.current,
+        uiRevision: uiRevisionRef.current,
       });
       setSessions([session]);
       setInput('');
@@ -311,36 +373,60 @@ export function KnowledgeChat() {
     setInput('');
     setLoading(true);
 
-    const userMsg = createMessage('user', text);
-    const withUser: ChatSession = {
-      ...activeSession,
-      messages: [...activeSession.messages, userMsg],
-      title:
-        activeSession.messages.length === 0
-          ? deriveSessionTitle(text)
-          : activeSession.title,
-      updatedAt: Date.now(),
-    };
-    patchSession(activeSession.id, () => withUser);
+    const sessionId = activeSession.id;
+    let baseSession = activeSession;
 
     try {
+      const { session: synced, hadRemoteUpdates } =
+        await mergeSessionWithRemoteBeforeSend(activeSession);
+      baseSession = synced;
+      if (hadRemoteUpdates) {
+        const next = sessionsRef.current.map((s) =>
+          s.id === sessionId ? synced : s,
+        );
+        scheduleWorkspacePersist(next);
+      }
+
+      const userMsg = createMessage('user', text);
+      const withUser = bumpSession({
+        ...baseSession,
+        messages: [...baseSession.messages, userMsg],
+        title:
+          baseSession.messages.length === 0
+            ? deriveSessionTitle(text)
+            : baseSession.title,
+      });
+      patchSession(sessionId, () => withUser);
+
       const reply = await createChatCompletion({
         model,
         messages: toApiMessages(withUser),
       });
       const assistantMsg = createMessage('assistant', reply);
-      patchSession(activeSession.id, (s) => ({
-        ...s,
-        messages: [...withUser.messages, assistantMsg],
-        updatedAt: Date.now(),
-      }));
+      patchSession(sessionId, (s) =>
+        bumpSession({
+          ...s,
+          messages: [...withUser.messages, assistantMsg],
+        }),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-      patchSession(activeSession.id, (s) => ({
-        ...s,
-        messages: s.messages.filter((m) => m.id !== userMsg.id),
-        updatedAt: Date.now(),
-      }));
+      setSessions((prev) => {
+        const cur = prev.find((s) => s.id === sessionId);
+        if (!cur) return prev;
+        const last = cur.messages[cur.messages.length - 1];
+        if (last?.role !== 'user') return prev;
+        const next = prev.map((s) =>
+          s.id === sessionId
+            ? bumpSession({
+                ...s,
+                messages: s.messages.filter((m) => m.id !== last.id),
+              })
+            : s,
+        );
+        scheduleWorkspacePersist(next);
+        return next;
+      });
     } finally {
       setLoading(false);
       inputRef.current?.focus();
@@ -459,7 +545,7 @@ export function KnowledgeChat() {
                 const next = e.target.value as ChatModel;
                 setModel(next);
                 modelRef.current = next;
-                scheduleWorkspacePersist(sessions, { chatModel: next });
+                scheduleWorkspacePersist(sessionsRef.current, { chatModel: next });
               }}
               disabled={loading}
               className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
