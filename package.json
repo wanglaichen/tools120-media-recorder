@@ -1,7 +1,7 @@
 {
   "name": "tools020-media-recorder",
   "private": true,
-  "version": "0.5.8",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "server:dev": "node server/index.mjs",
