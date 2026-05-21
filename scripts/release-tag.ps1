@@ -1,4 +1,4 @@
-# GitHub 发版：只 push 一次 tag，避免 CI 跑两遍
+# Push version tag once (avoids duplicate GitHub Actions runs)
 param(
   [Parameter(Mandatory = $true)]
   [string]$Tag
@@ -9,24 +9,24 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
 if ($Tag -notmatch '^v\d+\.\d+\.\d+(-[\w.-]+)?$') {
-  throw "Tag 须为 v1.2.3 或 v1.2.3-beta.1 形式"
+  throw 'Tag must look like v1.2.3 or v1.2.3-beta.1'
 }
 
-$localTag = git rev-parse $Tag 2>$null
+git rev-parse $Tag 2>$null | Out-Null
 if ($LASTEXITCODE -eq 0) {
-  throw "本地已存在 Tag $Tag。勿使用 tag -f / push --force，否则会触发第二次 CI。"
+  throw "Tag $Tag already exists locally. Do not use tag -f or push --force."
 }
 
-$remoteTag = git ls-remote --tags origin "refs/tags/$Tag"
-if ($remoteTag) {
-  throw "远端已存在 Tag $Tag，拒绝重复推送。"
+$remoteTag = git ls-remote --tags origin $Tag
+if ($LASTEXITCODE -eq 0 -and $remoteTag) {
+  throw "Tag $Tag already exists on origin."
 }
 
-Write-Host "同步 main..."
+Write-Host 'Pushing main...'
 git push origin main
 
-Write-Host "创建并推送 Tag $Tag（仅一次）..."
+Write-Host "Creating and pushing tag $Tag (once)..."
 git tag -a $Tag -m "release $Tag"
 git push origin $Tag
 
-Write-Host "完成。请在 GitHub Actions 查看 CI/CD（应只有 1 条运行）。"
+Write-Host 'Done. Expect exactly one CI/CD run on GitHub Actions.'
