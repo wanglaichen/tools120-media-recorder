@@ -76,6 +76,13 @@ jobs:
       url: https://${{ vars.EDGEONE_PROJECT_NAME || 'tools120-media-recorder' }}.edgeone.page
 
     steps:
+      - name: Checkout main
+        if: env.EDGEONE_DEPLOY_MODE == 'git'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
       - name: Download dist
         if: env.EDGEONE_DEPLOY_MODE == 'upload'
         uses: actions/download-artifact@v4
@@ -106,11 +113,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          git checkout main
-          git pull origin main
           git commit --allow-empty -m "ci: trigger EdgeOne deploy for ${{ github.ref_name }}"
-          git push origin main
+          git push origin HEAD:main
           echo "已推送 main，EdgeOne 将自动拉取仓库并构建（请确认生产分支为 main）"
 
   release:
