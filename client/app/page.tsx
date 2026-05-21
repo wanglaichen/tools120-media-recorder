@@ -64,8 +64,6 @@ type WebAudioWindow = Window &
     webkitAudioContext?: typeof AudioContext;
   };
 
-const ACTIVE_PAGE_STORAGE_KEY = 'tools120-media-recorder.active-page';
-
 const isPageKey = (value: string | null): value is PageKey =>
   value === 'capture' || value === 'convert' || value === 'video' || value === 'image' || value === 'chat';
 
@@ -91,6 +89,7 @@ const saveActivePageMemory = async (activePage: PageKey) => {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ activePage }),
+    keepalive: true,
   });
   if (!response.ok) throw new Error(`保存页签记忆失败：HTTP ${response.status}`);
 };
@@ -274,15 +273,6 @@ export default function HomePage() {
         if (!cancelled && savedPage && !activePageTouchedRef.current) {
           setActivePage(savedPage);
         }
-      } catch {
-        try {
-          const savedPage = window.localStorage.getItem(ACTIVE_PAGE_STORAGE_KEY);
-          if (!cancelled && isPageKey(savedPage) && !activePageTouchedRef.current) {
-            setActivePage(savedPage);
-          }
-        } catch {
-          // localStorage can be unavailable in private browsing or restricted webviews.
-        }
       } finally {
         if (!cancelled) {
           setActivePageMemoryReady(true);
@@ -295,20 +285,10 @@ export default function HomePage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!activePageMemoryReady) return;
-    void saveActivePageMemory(activePage).catch(() => {
-      try {
-        window.localStorage.setItem(ACTIVE_PAGE_STORAGE_KEY, activePage);
-      } catch {
-        // Keep navigation usable even when persistence is blocked.
-      }
-    });
-  }, [activePage, activePageMemoryReady]);
-
   const handleActivePageSelect = (page: PageKey) => {
     activePageTouchedRef.current = true;
     setActivePage(page);
+    void saveActivePageMemory(page);
   };
 
   const canRecord = status === 'idle' || status === 'ready' || status === 'stopped' || status === 'error';

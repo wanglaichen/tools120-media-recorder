@@ -16,7 +16,17 @@ const defaultManifest = () => ({
   recordings: [],
 });
 
+const pageKeys = new Set(['capture', 'convert', 'video', 'image', 'chat']);
+
+const defaultUiState = () => ({
+  version: 1,
+  updatedAt: new Date().toISOString(),
+  activePage: 'capture',
+});
+
 const sanitizeId = (id) => /^[a-zA-Z0-9_-]+$/.test(id);
+
+const normalizeActivePage = (value) => (typeof value === 'string' && pageKeys.has(value) ? value : null);
 
 const getClientIp = (req) => {
   const forwarded = req.headers['x-forwarded-for'];
@@ -31,7 +41,7 @@ const getClientIp = (req) => {
   return req.socket?.remoteAddress || '-';
 };
 
-/** @param {{ storage: 'disk', uploadDir: string, manifestPath: string, maxAudioMb: number, chatSessionsPath?: string } | { storage: 'memory', maxAudioMb: number, chatSessionsPath?: string }} opts */
+/** @param {{ storage: 'disk', uploadDir: string, manifestPath: string, maxAudioMb: number, chatSessionsPath?: string, uiStatePath?: string } | { storage: 'memory', maxAudioMb: number, chatSessionsPath?: string }} opts */
 export function createApiApp(opts) {
   const maxAudioMb = opts.maxAudioMb ?? 25;
   const clientOrigins = (process.env.CLIENT_ORIGIN ||
@@ -46,13 +56,20 @@ export function createApiApp(opts) {
   let readAudioBuffer;
   let deleteAudioFile;
   let saveMemoryFile = null;
+  let readUiState;
+  let writeUiState;
 
   if (opts.storage === 'disk') {
     const uploadDir = opts.uploadDir;
     const manifestPath = opts.manifestPath;
+    const uiStatePath = opts.uiStatePath || path.resolve(uploadDir, '..', 'ui-state.json');
 
     const ensureUploadDir = () => {
       fs.mkdirSync(uploadDir, { recursive: true });
+    };
+
+    const ensureUiStateDir = () => {
+      fs.mkdirSync(path.dirname(uiStatePath), { recursive: true });
     };
 
     readManifest = () => {
@@ -77,6 +94,32 @@ export function createApiApp(opts) {
       ensureUploadDir();
       manifest.updatedAt = new Date().toISOString();
       fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+    };
+
+    readUiState = () => {
+      ensureUiStateDir();
+      if (!fs.existsSync(uiStatePath)) return defaultUiState();
+      try {
+        const parsed = JSON.parse(fs.readFileSync(uiStatePath, 'utf8'));
+        return {
+          ...defaultUiState(),
+          ...parsed,
+          activePage: normalizeActivePage(parsed?.activePage) || 'capture',
+        };
+      } catch {
+        return defaultUiState();
+      }
+    };
+
+    writeUiState = (next) => {
+      ensureUiStateDir();
+      const state = {
+        ...defaultUiState(),
+        ...next,
+        updatedAt: new Date().toISOString(),
+      };
+      fs.writeFileSync(uiStatePath, JSON.stringify(state, null, 2), 'utf8');
+      return state;
     };
 
     const diskStorage = multer.diskStorage({
@@ -109,11 +152,23 @@ export function createApiApp(opts) {
   } else {
     const memoryFiles = new Map();
     let manifest = defaultManifest();
+    let uiState = defaultUiState();
 
     readManifest = () => manifest;
 
     writeManifest = (next) => {
       manifest = { ...next, updatedAt: new Date().toISOString() };
+    };
+
+    readUiState = () => uiState;
+
+    writeUiState = (next) => {
+      uiState = {
+        ...defaultUiState(),
+        ...next,
+        updatedAt: new Date().toISOString(),
+      };
+      return uiState;
     };
 
     upload = multer({
@@ -164,6 +219,28 @@ export function createApiApp(opts) {
       storage: opts.storage,
       clientIp: getClientIp(req),
       host: req.headers.host || null,
+    });
+  });
+
+  router.get('/ui-state', (_req, res) => {
+    const state = readUiState();
+    res.json({
+      activePage: state.activePage,
+      updatedAt: state.updatedAt,
+    });
+  });
+
+  router.put('/ui-state', (req, res) => {
+    const activePage = normalizeActivePage(req.body?.activePage);
+    if (!activePage) {
+      res.status(400).json({ error: 'invalid activePage' });
+      return;
+    }
+
+    const state = writeUiState({ activePage });
+    res.json({
+      activePage: state.activePage,
+      updatedAt: state.updatedAt,
     });
   });
 
