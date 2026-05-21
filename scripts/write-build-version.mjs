@@ -1,5 +1,7 @@
 /**
- * 构建前写入 client/lib/build-info.ts，供页面展示版本号（静态导出会打进 HTML）。
+ * 构建前写入版本信息：
+ * - client/lib/build-info.ts（源码引用）
+ * - client/.env.production（Next 构建时内联 NEXT_PUBLIC_* 进静态 HTML）
  */
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -24,11 +26,23 @@ const pad = (n) => String(n).padStart(2, '0');
 const stamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}`;
 const buildId = `${stamp}-${git}`;
 
-const outPath = path.join(root, 'client/lib/build-info.ts');
-const content = `/** 由 scripts/write-build-version.mjs 自动生成，请勿手改 */
+const buildInfoPath = path.join(root, 'client/lib/build-info.ts');
+fs.writeFileSync(
+  buildInfoPath,
+  `/** 由 scripts/write-build-version.mjs 自动生成，请勿手改 */
 export const APP_VERSION = ${JSON.stringify(version)};
 export const BUILD_ID = ${JSON.stringify(buildId)};
-`;
+`,
+  'utf8',
+);
 
-fs.writeFileSync(outPath, content, 'utf8');
+const envProductionPath = path.join(root, 'client/.env.production');
+const envLines = [
+  '# 由 scripts/write-build-version.mjs 自动生成',
+  `NEXT_PUBLIC_APP_VERSION=${version}`,
+  `NEXT_PUBLIC_BUILD_ID=${buildId}`,
+  '',
+];
+fs.writeFileSync(envProductionPath, envLines.join('\n'), 'utf8');
+
 console.log(`[write-build-version] ${version} · ${buildId}`);
