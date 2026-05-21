@@ -21,8 +21,10 @@ export NEXT_PUBLIC_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL:-https://tools120-me
 npm run --prefix client build
 
 node scripts/postprocess-static-export.mjs
+node scripts/verify-static-export.mjs ./client/out
 node scripts/sync-dist.mjs
 
+test -f ./client/out/index.html
 test -f ./dist/index.html
-echo "=== CI build OK ==="
-ls -la ./dist | head -20
+echo "=== CI build OK (client/out + dist) ==="
+ls -la ./client/out | head -15

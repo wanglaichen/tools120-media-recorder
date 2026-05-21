@@ -127,9 +127,11 @@ git push origin v1.1.1
 
 | Job | 触发 | 作用 |
 |-----|------|------|
-| **build** | Tag `v*` 或 PR/分支推送 | 编译前端，产出 `dist` |
-| **deploy** | Tag 推送自动 | 部署到 EdgeOne |
-| **release** | Tag 推送自动 | 创建 GitHub Release |
+| **build** | 仅 Tag `v*.*.*`（如 `v1.2.3`） | 编译前端，产出 `client/out` 与 `dist` |
+| **deploy** | 同上 Tag 推送 | 部署到 EdgeOne |
+| **release** | 同上 Tag 推送 | 创建 GitHub Release |
+
+> `push main`、Pull Request **不会**触发本 workflow。Dependabot 的「Dependabot Updates」是 GitHub 自带，与 CI/CD 无关。
 
 **打 Tag 自动构建并发布：**
 
