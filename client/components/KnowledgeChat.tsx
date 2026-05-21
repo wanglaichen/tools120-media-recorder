@@ -15,19 +15,18 @@ import { MiniMaxBillingAlert } from '@/components/MiniMaxBillingAlert';
 import { createChatCompletion, type ChatModel, type ChatTurn } from '@/lib/minimax';
 import { buildMiniMaxBillingAlert } from '@/lib/minimax-errors';
 import {
-  bumpSession,
   clearAllChatSessions,
   createEmptySession,
   createMessage,
+  createQAPair,
   deriveSessionTitle,
   loadChatWorkspace,
-  mergeSessionWithRemoteBeforeSend,
+  mergePairsIntoSession,
   pickActiveSessionId,
-  pollChatWorkspace,
   saveChatWorkspace,
   type ChatSession,
   type ChatStorageMode,
-  type ChatWorkspacePayload,
+  type QAPair,
 } from '@/lib/chat-storage';
 
 const MODEL_OPTIONS: { value: ChatModel; label: string }[] = [
@@ -39,8 +38,6 @@ const MODEL_OPTIONS: { value: ChatModel; label: string }[] = [
 
 const SYSTEM_PROMPT =
   '你是一个专业的知识问答助手。请用清晰、准确的中文回答用户问题；若不确定请如实说明，不要编造事实。';
-
-const CHAT_POLL_MS = 2000;
 
 function toApiMessages(session: ChatSession): ChatTurn[] {
   return [
@@ -62,237 +59,60 @@ export function KnowledgeChat() {
   const [hydrated, setHydrated] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [syncMode, setSyncMode] = useState<ChatStorageMode>('local');
-  const [serverRevision, setServerRevision] = useState('');
   const [syncError, setSyncError] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const revisionRef = useRef('');
+  const sessionsRef = useRef<ChatSession[]>([]);
   const activeIdRef = useRef('');
   const modelRef = useRef<ChatModel>('MiniMax-M2.7');
-  const savingRef = useRef(false);
-  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingPersistRef = useRef<ChatWorkspacePayload | null>(null);
-  const sessionsRef = useRef<ChatSession[]>([]);
-  const workspaceSeqRef = useRef(0);
-  const uiRevisionRef = useRef(0);
-  const saveFailStreakRef = useRef(0);
 
-  useEffect(() => {
-    sessionsRef.current = sessions;
-  }, [sessions]);
+  useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
+  useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
+  useEffect(() => { modelRef.current = model; }, [model]);
 
-  useEffect(() => {
-    activeIdRef.current = activeId;
-  }, [activeId]);
-
-  useEffect(() => {
-    modelRef.current = model;
-  }, [model]);
-
-  useEffect(() => {
-    revisionRef.current = serverRevision;
-  }, [serverRevision]);
-
+  // Load from server on mount
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const snapshot = await loadChatWorkspace();
-      if (cancelled) return;
-      setSyncMode(snapshot.mode);
-      setServerRevision(snapshot.revision);
-      revisionRef.current = snapshot.revision;
-      setModel(snapshot.chatModel);
-      modelRef.current = snapshot.chatModel;
-      workspaceSeqRef.current = snapshot.workspaceSeq;
-      uiRevisionRef.current = snapshot.uiRevision;
-      if (snapshot.sessions.length === 0) {
-        const first = createEmptySession();
-        workspaceSeqRef.current += 1;
-        setSessions([first]);
-        setActiveId(first.id);
-        activeIdRef.current = first.id;
-        const saved = await saveChatWorkspace({
-          sessions: [first],
-          activeSessionId: first.id,
-          chatModel: snapshot.chatModel,
-          workspaceSeq: workspaceSeqRef.current,
-          uiRevision: uiRevisionRef.current,
-        });
-        if (!cancelled) {
-          setSyncMode(saved.mode);
-          setServerRevision(saved.revision);
-          revisionRef.current = saved.revision;
-          workspaceSeqRef.current = saved.workspaceSeq;
-          uiRevisionRef.current = saved.uiRevision;
+      try {
+        const snapshot = await loadChatWorkspace();
+        if (cancelled) return;
+        if (snapshot.sessions.length === 0) {
+          const first = createEmptySession();
+          setSessions([first]);
+          setActiveId(first.id);
+          activeIdRef.current = first.id;
+        } else {
+          setSessions(snapshot.sessions);
+          const active = pickActiveSessionId(snapshot.activeSessionId, snapshot.sessions);
+          setActiveId(active);
+          activeIdRef.current = active;
         }
-      } else {
-        setSessions(snapshot.sessions);
-        const active = pickActiveSessionId(snapshot.activeSessionId, snapshot.sessions);
-        setActiveId(active);
-        activeIdRef.current = active;
+        setModel(snapshot.chatModel);
+        modelRef.current = snapshot.chatModel;
+        setSyncMode(snapshot.mode);
+      } finally {
+        if (!cancelled) setHydrated(true);
       }
-      setHydrated(true);
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
-
-  const getLocalWorkspacePayload = useCallback((): ChatWorkspacePayload => {
-    if (pendingPersistRef.current) return pendingPersistRef.current;
-    return {
-      sessions: sessionsRef.current,
-      activeSessionId: activeIdRef.current,
-      chatModel: modelRef.current,
-      workspaceSeq: workspaceSeqRef.current,
-      uiRevision: uiRevisionRef.current,
-    };
-  }, []);
-
-  const applyWorkspacePayload = useCallback((payload: ChatWorkspacePayload) => {
-    setSessions(payload.sessions);
-    const active = pickActiveSessionId(payload.activeSessionId, payload.sessions);
-    setActiveId(active);
-    activeIdRef.current = active;
-    setModel(payload.chatModel);
-    modelRef.current = payload.chatModel;
-    workspaceSeqRef.current = payload.workspaceSeq;
-    uiRevisionRef.current = payload.uiRevision;
-  }, []);
-
-  const flushPersist = useCallback(async () => {
-    const next = pendingPersistRef.current;
-    if (!next) return;
-    pendingPersistRef.current = null;
-    savingRef.current = true;
-    try {
-      let saved = await saveChatWorkspace(next);
-      if (saved.mode !== 'server') {
-        await new Promise((r) => setTimeout(r, 400));
-        saved = await saveChatWorkspace(next);
-      }
-      setSyncMode(saved.mode);
-      setServerRevision(saved.revision);
-      revisionRef.current = saved.revision;
-      workspaceSeqRef.current = saved.workspaceSeq;
-      uiRevisionRef.current = saved.uiRevision;
-      if (saved.mode === 'server') {
-        saveFailStreakRef.current = 0;
-        setSyncError('');
-      } else {
-        saveFailStreakRef.current += 1;
-        if (saveFailStreakRef.current >= 2) {
-          setSyncError(
-            '暂时无法同步到 API（请确认已运行 start.ps1 / 8787 端口）。会话已缓存在本机，恢复连接后会自动重试。',
-          );
-        }
-      }
-    } catch (err) {
-      saveFailStreakRef.current += 1;
-      if (saveFailStreakRef.current >= 2) {
-        setSyncError(err instanceof Error ? err.message : String(err));
-      }
-    } finally {
-      savingRef.current = false;
-    }
-  }, []);
-
-  const scheduleWorkspacePersist = useCallback(
-    (
-      nextSessions: ChatSession[],
-      overrides?: Partial<
-        Pick<ChatWorkspacePayload, 'activeSessionId' | 'chatModel' | 'uiRevision'>
-      >,
-    ) => {
-      workspaceSeqRef.current += 1;
-      if (overrides?.uiRevision !== undefined) {
-        uiRevisionRef.current = overrides.uiRevision;
-      } else if (overrides?.activeSessionId !== undefined || overrides?.chatModel !== undefined) {
-        uiRevisionRef.current += 1;
-      }
-      setSessions(nextSessions);
-      pendingPersistRef.current = {
-        sessions: nextSessions,
-        activeSessionId: pickActiveSessionId(
-          overrides?.activeSessionId ?? activeIdRef.current,
-          nextSessions,
-        ),
-        chatModel: overrides?.chatModel ?? modelRef.current,
-        workspaceSeq: workspaceSeqRef.current,
-        uiRevision: uiRevisionRef.current,
-      };
-      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
-      persistTimerRef.current = setTimeout(() => {
-        persistTimerRef.current = null;
-        void flushPersist();
-      }, 400);
-    },
-    [flushPersist],
-  );
-
-  useEffect(() => {
-    if (!hydrated || syncMode !== 'server') return;
-    const timer = window.setInterval(() => {
-      if (loading || savingRef.current || persistTimerRef.current || pendingPersistRef.current) {
-        return;
-      }
-      void (async () => {
-        const result = await pollChatWorkspace(
-          revisionRef.current,
-          getLocalWorkspacePayload(),
-        );
-        if (!result) return;
-        revisionRef.current = result.remote.revision;
-        setServerRevision(result.remote.revision);
-        applyWorkspacePayload(result.merged);
-        setSyncMode('server');
-        saveFailStreakRef.current = 0;
-        setSyncError('');
-        if (result.localWins) {
-          pendingPersistRef.current = result.merged;
-          if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
-          persistTimerRef.current = setTimeout(() => {
-            persistTimerRef.current = null;
-            void flushPersist();
-          }, 400);
-        }
-      })();
-    }, CHAT_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [hydrated, syncMode, loading, getLocalWorkspacePayload, applyWorkspacePayload, flushPersist]);
-
-  const selectSession = useCallback(
-    (id: string) => {
-      setActiveId(id);
-      activeIdRef.current = id;
-      setError('');
-      scheduleWorkspacePersist(sessionsRef.current, { activeSessionId: id });
-    },
-    [scheduleWorkspacePersist],
-  );
-
-  useEffect(
-    () => () => {
-      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
-    },
-    [],
-  );
-
-  const patchSession = useCallback(
-    (id: string, updater: (s: ChatSession) => ChatSession) => {
-      setSessions((prev) => {
-        const next = prev.map((s) => (s.id === id ? updater(s) : s));
-        scheduleWorkspacePersist(next);
-        return next;
-      });
-    },
-    [scheduleWorkspacePersist],
-  );
 
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeId) ?? null,
     [sessions, activeId],
   );
+
+  // Current seq for conflict detection — track per session
+  const sessionSeqRef = useRef<Map<string, number>>(new Map());
+
+  const getCurrentSeq = useCallback((sessionId: string) => {
+    return sessionSeqRef.current.get(sessionId) ?? 0;
+  }, []);
+
+  const setCurrentSeq = useCallback((sessionId: string, seq: number) => {
+    sessionSeqRef.current.set(sessionId, seq);
+  }, []);
 
   useEffect(() => {
     if (listRef.current) {
@@ -300,32 +120,45 @@ export function KnowledgeChat() {
     }
   }, [activeSession?.messages, loading]);
 
+  const selectSession = useCallback((id: string) => {
+    setActiveId(id);
+    activeIdRef.current = id;
+    setError('');
+  }, []);
+
+  const patchSession = useCallback((
+    id: string,
+    updater: (s: ChatSession) => ChatSession,
+  ) => {
+    setSessions((prev) => prev.map((s) => (s.id === id ? updater(s) : s)));
+  }, []);
+
   const newSession = () => {
     const session = createEmptySession();
-    const next = [session, ...sessionsRef.current];
+    setSessions((prev) => [session, ...prev]);
     setActiveId(session.id);
     activeIdRef.current = session.id;
-    uiRevisionRef.current += 1;
-    scheduleWorkspacePersist(next, { activeSessionId: session.id });
+    setCurrentSeq(session.id, 0);
     setInput('');
     setError('');
     inputRef.current?.focus();
   };
 
   const deleteSession = (id: string) => {
-    const next = sessions.filter((s) => s.id !== id);
-    if (next.length === 0) {
-      const session = createEmptySession();
-      setActiveId(session.id);
-      activeIdRef.current = session.id;
-      scheduleWorkspacePersist([session], { activeSessionId: session.id });
-    } else {
-      const nextActive =
-        activeId === id ? pickActiveSessionId(next[0].id, next) : activeId;
+    setSessions((prev) => {
+      const next = prev.filter((s) => s.id !== id);
+      if (next.length === 0) {
+        const session = createEmptySession();
+        setActiveId(session.id);
+        activeIdRef.current = session.id;
+        setCurrentSeq(session.id, 0);
+        return [session];
+      }
+      const nextActive = activeId === id ? pickActiveSessionId(next[0].id, next) : activeId;
       setActiveId(nextActive);
       activeIdRef.current = nextActive;
-      scheduleWorkspacePersist(next, { activeSessionId: nextActive });
-    }
+      return next;
+    });
     setError('');
   };
 
@@ -343,20 +176,11 @@ export function KnowledgeChat() {
     try {
       const cleared = await clearAllChatSessions();
       setSyncMode(cleared.mode);
-      setServerRevision(cleared.revision);
-      revisionRef.current = cleared.revision;
       const session = createEmptySession();
+      setSessions([session]);
       setActiveId(session.id);
       activeIdRef.current = session.id;
-      workspaceSeqRef.current += 1;
-      await saveChatWorkspace({
-        sessions: [session],
-        activeSessionId: session.id,
-        chatModel: modelRef.current,
-        workspaceSeq: workspaceSeqRef.current,
-        uiRevision: uiRevisionRef.current,
-      });
-      setSessions([session]);
+      setCurrentSeq(session.id, 0);
       setInput('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -377,25 +201,15 @@ export function KnowledgeChat() {
     let baseSession = activeSession;
 
     try {
-      const { session: synced, hadRemoteUpdates } =
-        await mergeSessionWithRemoteBeforeSend(activeSession);
-      baseSession = synced;
-      if (hadRemoteUpdates) {
-        const next = sessionsRef.current.map((s) =>
-          s.id === sessionId ? synced : s,
-        );
-        scheduleWorkspacePersist(next);
-      }
-
       const userMsg = createMessage('user', text);
-      const withUser = bumpSession({
+      const withUser = {
         ...baseSession,
         messages: [...baseSession.messages, userMsg],
-        title:
-          baseSession.messages.length === 0
-            ? deriveSessionTitle(text)
-            : baseSession.title,
-      });
+        title: baseSession.messages.length === 0
+          ? deriveSessionTitle(text)
+          : baseSession.title,
+        updatedAt: Date.now(),
+      };
       patchSession(sessionId, () => withUser);
 
       const reply = await createChatCompletion({
@@ -403,29 +217,54 @@ export function KnowledgeChat() {
         messages: toApiMessages(withUser),
       });
       const assistantMsg = createMessage('assistant', reply);
-      patchSession(sessionId, (s) =>
-        bumpSession({
-          ...s,
-          messages: [...withUser.messages, assistantMsg],
-        }),
-      );
+
+      const pair = createQAPair(userMsg, assistantMsg, getCurrentSeq(sessionId));
+      const baseSeq = getCurrentSeq(sessionId);
+
+      const result = await saveChatWorkspace(sessionId, [pair], baseSeq, {
+        title: withUser.title,
+        chatModel: model,
+        activeSessionId: sessionId,
+        workspaceSeq: 0,
+        uiRevision: 0,
+      });
+
+      // Conflict: someone else sent messages first — merge them in
+      if (result.conflict && result.newPairs.length > 0) {
+        patchSession(sessionId, (s) => mergePairsIntoSession(s, result.newPairs));
+        setSyncError('检测到其他设备抢先发送了新消息，已合并。');
+      }
+
+      setCurrentSeq(sessionId, result.currentSeq);
+
+      if (result.snapshot.mode === 'server') {
+        setSyncMode('server');
+        setSyncError('');
+      } else if (result.conflict === false) {
+        setSyncMode(result.snapshot.mode);
+      }
+
+      const finalSession = sessionsRef.current.find((s) => s.id === sessionId);
+      if (finalSession) {
+        patchSession(sessionId, () => ({
+          ...finalSession,
+          messages: [...finalSession.messages, assistantMsg].sort((a, b) => a.createdAt - b.createdAt),
+          updatedAt: Date.now(),
+        }));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      // Rollback: remove the user message we just added
       setSessions((prev) => {
         const cur = prev.find((s) => s.id === sessionId);
         if (!cur) return prev;
         const last = cur.messages[cur.messages.length - 1];
         if (last?.role !== 'user') return prev;
-        const next = prev.map((s) =>
+        return prev.map((s) =>
           s.id === sessionId
-            ? bumpSession({
-                ...s,
-                messages: s.messages.filter((m) => m.id !== last.id),
-              })
+            ? { ...s, messages: s.messages.filter((m) => m.id !== last.id) }
             : s,
         );
-        scheduleWorkspacePersist(next);
-        return next;
       });
     } finally {
       setLoading(false);
@@ -545,7 +384,6 @@ export function KnowledgeChat() {
                 const next = e.target.value as ChatModel;
                 setModel(next);
                 modelRef.current = next;
-                scheduleWorkspacePersist(sessionsRef.current, { chatModel: next });
               }}
               disabled={loading}
               className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
@@ -638,7 +476,7 @@ export function KnowledgeChat() {
           </div>
           <p className="mt-2 text-[10px] text-muted-foreground/70">
             {syncMode === 'server'
-              ? '会话、左侧选中项与模型均保存在 API，多浏览器约 2 秒同步；重新打开会恢复上次状态。'
+              ? '会话已保存到 API，多浏览器约 2 秒同步；重新打开会恢复上次状态。'
               : '未连接 API：请运行 start.ps1。仅本机浏览器可看到记录。'}
           </p>
         </div>

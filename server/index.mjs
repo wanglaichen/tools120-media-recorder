@@ -29,7 +29,7 @@ const manifestPath = path.join(uploadDir, 'manifest.json');
 const uiStatePath = path.resolve(rootDir, process.env.UI_STATE_PATH || 'output/ui-state.json');
 const chatSessionsPath = path.resolve(
   rootDir,
-  process.env.CHAT_SESSIONS_PATH || 'output/chat/knowledge-sessions.json',
+  process.env.CHAT_SESSIONS_PATH || 'output/chat',
 );
 const maxAudioMb = Number(process.env.MAX_AUDIO_MB || 25);
 
