@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { resolveApiBase, resolveApiOrigin, resolveHealthUrl } from '@/lib/recordings';
+import { APP_VERSION, BUILD_ID } from '@/lib/build-info';
 
-const appVersion = process.env.NEXT_PUBLIC_APP_VERSION ?? '0.0.0';
-const buildId = process.env.NEXT_PUBLIC_BUILD_ID ?? 'local';
+const appVersion = APP_VERSION;
+const buildId = BUILD_ID;
 
 type HealthPayload = {
   clientIp?: string;
