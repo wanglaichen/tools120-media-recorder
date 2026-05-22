@@ -38,6 +38,7 @@ import {
   fetchRecordingBlob,
   getRecordingFileUrl,
   updateRecordingName,
+  resolveUiStateUrl,
   type RecordingEntry,
 } from '@/lib/recordings';
 import { RecordingList } from '@/components/RecordingList';
@@ -67,16 +68,6 @@ type WebAudioWindow = Window &
 const isPageKey = (value: string | null): value is PageKey =>
   value === 'capture' || value === 'convert' || value === 'video' || value === 'image' || value === 'chat';
 
-const trimSlash = (value: string) => value.replace(/\/+$/, '');
-
-const resolveUiStateUrl = () => {
-  const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (apiOrigin?.startsWith('http://') || apiOrigin?.startsWith('https://')) {
-    return `${trimSlash(apiOrigin)}/api/ui-state`;
-  }
-  return '/api/ui-state';
-};
-
 const fetchActivePageMemory = async (): Promise<PageKey | null> => {
   const response = await fetch(resolveUiStateUrl(), { cache: 'no-store' });
   if (!response.ok) throw new Error(`读取页签记忆失败：HTTP ${response.status}`);
@@ -85,12 +76,17 @@ const fetchActivePageMemory = async (): Promise<PageKey | null> => {
 };
 
 const saveActivePageMemory = async (activePage: PageKey) => {
-  const response = await fetch(resolveUiStateUrl(), {
-    method: 'PUT',
+  const url = resolveUiStateUrl();
+  const init: RequestInit = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ activePage }),
     keepalive: true,
-  });
+  };
+
+  let response = await fetch(url, { ...init, method: 'PUT' });
+  if (!response.ok && [401, 403, 405].includes(response.status)) {
+    response = await fetch(url, { ...init, method: 'POST' });
+  }
   if (!response.ok) throw new Error(`保存页签记忆失败：HTTP ${response.status}`);
 };
 
@@ -288,7 +284,10 @@ export default function HomePage() {
   const handleActivePageSelect = (page: PageKey) => {
     activePageTouchedRef.current = true;
     setActivePage(page);
-    void saveActivePageMemory(page);
+    void saveActivePageMemory(page).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : '保存页签记忆失败';
+      setError(message);
+    });
   };
 
   const canRecord = status === 'idle' || status === 'ready' || status === 'stopped' || status === 'error';

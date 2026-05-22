@@ -42,6 +42,27 @@ export const resolveHealthUrl = (): string => {
   return origin ? `${origin}/api/health` : '/api/health';
 };
 
+/** 页签记忆 API；与站点同源时用相对路径，避免绝对 URL 在 EdgeOne 上异常 */
+export const resolveUiStateUrl = (): string => {
+  const configured = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (typeof window !== 'undefined' && configured) {
+    try {
+      const apiOrigin = trimSlash(configured);
+      if (apiOrigin.startsWith('http://') || apiOrigin.startsWith('https://')) {
+        if (trimSlash(window.location.origin) === apiOrigin) {
+          return '/api/ui-state';
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (configured?.startsWith('http://') || configured?.startsWith('https://')) {
+    return `${trimSlash(configured)}/api/ui-state`;
+  }
+  return '/api/ui-state';
+};
+
 export const resolveApiBase = (): string => {
   const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
   if (apiOrigin) {

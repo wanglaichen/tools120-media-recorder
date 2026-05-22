@@ -45,7 +45,7 @@ const getClientIp = (req) => {
 export function createApiApp(opts) {
   const maxAudioMb = opts.maxAudioMb ?? 25;
   const clientOrigins = (process.env.CLIENT_ORIGIN ||
-    'http://127.0.0.1:3000,http://127.0.0.1:5173,https://tools120-media-recorder.edgeone.dev')
+    'http://127.0.0.1:3000,http://127.0.0.1:5173,https://tools120-media-recorder.edgeone.dev,https://tools120-media-recorder.edgeone.cool')
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
@@ -230,7 +230,7 @@ export function createApiApp(opts) {
     });
   });
 
-  router.put('/ui-state', (req, res) => {
+  const putUiState = (req, res) => {
     const activePage = normalizeActivePage(req.body?.activePage);
     if (!activePage) {
       res.status(400).json({ error: 'invalid activePage' });
@@ -242,7 +242,10 @@ export function createApiApp(opts) {
       activePage: state.activePage,
       updatedAt: state.updatedAt,
     });
-  });
+  };
+
+  router.put('/ui-state', putUiState);
+  router.post('/ui-state', putUiState);
 
   router.get('/audio', (_req, res) => {
     res.json(readManifest());
