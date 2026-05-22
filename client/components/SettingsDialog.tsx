@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Eye, EyeOff, Settings, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Eye, EyeOff, Settings, X } from 'lucide-react';
 import {
   AI_PROVIDER_META,
   DEFAULT_APP_SETTINGS,
@@ -22,6 +22,13 @@ type Props = {
   onClose: () => void;
 };
 
+const ENV_VARS: { key: string; label: string }[] = [
+  { key: 'NEXT_PUBLIC_API_BASE_URL', label: 'API 基础地址' },
+  { key: 'NEXT_PUBLIC_UPLOAD_ENDPOINT', label: '上传端点' },
+  { key: 'NEXT_PUBLIC_APP_VERSION', label: '版本号' },
+  { key: 'NEXT_PUBLIC_BUILD_ID', label: '构建 ID' },
+];
+
 const inputClass =
   'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40';
 
@@ -32,6 +39,7 @@ export function SettingsDialog({ open, onClose }: Props) {
     minimax: false,
     deepseek: false,
   });
+  const [envExpanded, setEnvExpanded] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -173,6 +181,36 @@ export function SettingsDialog({ open, onClose }: Props) {
               </section>
             );
           })}
+
+          {/* 环境变量调试信息 */}
+          <section className="border-t border-border pt-4">
+            <button
+              type="button"
+              onClick={() => setEnvExpanded((p) => !p)}
+              className="flex w-full items-center gap-2 text-sm font-semibold text-foreground hover:text-primary"
+            >
+              {envExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              环境变量（调试）
+            </button>
+            {envExpanded && (
+              <div className="mt-2 space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2.5">
+                {ENV_VARS.map(({ key, label }) => {
+                  const value = process.env[key];
+                  return (
+                    <div key={key} className="flex items-start gap-2 text-xs">
+                      <span className="shrink-0 font-mono text-muted-foreground">{key}</span>
+                      <span className="text-muted-foreground">→</span>
+                      {value ? (
+                        <span className="flex-1 break-all font-mono text-foreground">{value}</span>
+                      ) : (
+                        <span className="flex-1 italic text-muted-foreground/60">(未设置)</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
         </div>
 
         <p className="border-t border-border px-4 py-2 text-[10px] text-muted-foreground">
