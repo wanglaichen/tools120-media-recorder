@@ -27,48 +27,66 @@ export type RecordingsManifest = {
 
 const trimSlash = (value: string) => value.replace(/\/$/, '');
 
-/** API 服务根地址（用于展示、健康检查） */
-export const resolveApiOrigin = (): string => {
+const configuredApiOrigin = (): string => {
   const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
   if (apiOrigin?.startsWith('http://') || apiOrigin?.startsWith('https://')) {
     return trimSlash(apiOrigin);
   }
-  if (typeof window !== 'undefined') return window.location.origin;
   return '';
 };
 
+const isLocalDevHost = (hostname: string) =>
+  hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]';
+
+/**
+ * 浏览器内实际请求 API 的 origin。
+ * 预览域名（*-xxx.edgeone.cool）与构建变量里的正式域名不一致时，必须用当前页同源，否则会跨域/401。
+ */
+const resolveBrowserApiOrigin = (): string => {
+  const pageOrigin = trimSlash(window.location.origin);
+  const configured = configuredApiOrigin();
+  if (!configured || configured === pageOrigin) return pageOrigin;
+  if (isLocalDevHost(window.location.hostname)) return configured;
+  return pageOrigin;
+};
+
+/** 顶栏展示用：浏览器内为当前页 origin，构建/SSR 为环境变量 */
+export const resolveApiOrigin = (): string => {
+  if (typeof window !== 'undefined') return resolveBrowserApiOrigin();
+  return configuredApiOrigin();
+};
+
 export const resolveHealthUrl = (): string => {
-  const origin = resolveApiOrigin();
+  if (typeof window !== 'undefined') {
+    if (isLocalDevHost(window.location.hostname) && configuredApiOrigin()) {
+      return `${configuredApiOrigin()}/api/health`;
+    }
+    return '/api/health';
+  }
+  const origin = configuredApiOrigin();
   return origin ? `${origin}/api/health` : '/api/health';
 };
 
-/** 页签记忆 API；与站点同源时用相对路径，避免绝对 URL 在 EdgeOne 上异常 */
 export const resolveUiStateUrl = (): string => {
-  const configured = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (typeof window !== 'undefined' && configured) {
-    try {
-      const apiOrigin = trimSlash(configured);
-      if (apiOrigin.startsWith('http://') || apiOrigin.startsWith('https://')) {
-        if (trimSlash(window.location.origin) === apiOrigin) {
-          return '/api/ui-state';
-        }
-      }
-    } catch {
-      /* ignore */
+  if (typeof window !== 'undefined') {
+    if (isLocalDevHost(window.location.hostname) && configuredApiOrigin()) {
+      return `${configuredApiOrigin()}/api/ui-state`;
     }
+    return '/api/ui-state';
   }
-  if (configured?.startsWith('http://') || configured?.startsWith('https://')) {
-    return `${trimSlash(configured)}/api/ui-state`;
-  }
-  return '/api/ui-state';
+  const origin = configuredApiOrigin();
+  return origin ? `${origin}/api/ui-state` : '/api/ui-state';
 };
 
 export const resolveApiBase = (): string => {
-  const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (apiOrigin) {
-    return `${trimSlash(apiOrigin)}/api/audio`;
+  if (typeof window !== 'undefined') {
+    if (isLocalDevHost(window.location.hostname) && configuredApiOrigin()) {
+      return `${configuredApiOrigin()}/api/audio`;
+    }
+    return '/api/audio';
   }
-  return '/api/audio';
+  const origin = configuredApiOrigin();
+  return origin ? `${origin}/api/audio` : '/api/audio';
 };
 
 export const usesLocalRecordings = (): boolean => {
@@ -79,14 +97,18 @@ export const usesLocalRecordings = (): boolean => {
   return true;
 };
 
-const apiUnavailableMessage =
-  '线上录音 API 不可用：请确认 EdgeOne 已部署 cloud-functions，并设置 NEXT_PUBLIC_API_BASE_URL 为站点根地址后重新构建。当前已改用浏览器本地存储。';
+export const apiUnavailableMessage =
+  'API 不可用（返回了 EdgeOne 登录/401 页面）：请用控制台「预览」链接打开本站，或确认云函数已部署；预览地址请访问当前域名下的 /api/ui-state，勿跨域请求其它域名。';
 
-const readResponseJson = async <T>(response: Response, bodyText?: string): Promise<T> => {
+export const readResponseJson = async <T>(response: Response, bodyText?: string): Promise<T> => {
   const text = bodyText ?? (await response.text());
   const contentType = response.headers.get('content-type') ?? '';
   if (contentType.includes('text/html') || text.trimStart().startsWith('<!')) {
-    throw new Error(apiUnavailableMessage);
+    throw new Error(
+      response.status === 401
+        ? `${apiUnavailableMessage}（HTTP 401）`
+        : apiUnavailableMessage,
+    );
   }
   try {
     return JSON.parse(text) as T;
@@ -110,13 +132,11 @@ const requestJson = async <T>(input: RequestInfo | URL, init?: RequestInit): Pro
   return data;
 };
 
-const apiBase = resolveApiBase();
-
-export const getRecordingFileUrl = (id: string) => `${apiBase}/${id}/file`;
+export const getRecordingFileUrl = (id: string) => `${resolveApiBase()}/${id}/file`;
 
 export const fetchManifest = async (): Promise<RecordingsManifest> => {
   if (usesLocalRecordings()) return localFetchManifest();
-  return requestJson<RecordingsManifest>(apiBase);
+  return requestJson<RecordingsManifest>(resolveApiBase());
 };
 
 export const createRecording = async (
@@ -134,7 +154,7 @@ export const createRecording = async (
   formData.append('duration', String(duration));
   formData.append('displayName', displayName);
 
-  return requestJson<{ recording: RecordingEntry; manifest: RecordingsManifest }>(apiBase, {
+  return requestJson<{ recording: RecordingEntry; manifest: RecordingsManifest }>(resolveApiBase(), {
     method: 'POST',
     body: formData,
   });
@@ -146,24 +166,31 @@ export const updateRecordingName = async (
 ): Promise<{ recording: RecordingEntry; manifest: RecordingsManifest }> => {
   if (usesLocalRecordings()) return localUpdateRecordingName(id, displayName);
 
-  return requestJson<{ recording: RecordingEntry; manifest: RecordingsManifest }>(`${apiBase}/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ displayName }),
-  });
+  return requestJson<{ recording: RecordingEntry; manifest: RecordingsManifest }>(
+    `${resolveApiBase()}/${id}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ displayName }),
+    },
+  );
 };
 
 export const deleteRecordingById = async (id: string): Promise<RecordingsManifest> => {
   if (usesLocalRecordings()) return localDeleteRecordingById(id);
 
-  const data = await requestJson<{ manifest: RecordingsManifest }>(`${apiBase}/${id}`, { method: 'DELETE' });
+  const data = await requestJson<{ manifest: RecordingsManifest }>(`${resolveApiBase()}/${id}`, {
+    method: 'DELETE',
+  });
   return data.manifest;
 };
 
 export const clearAllRecordings = async (): Promise<RecordingsManifest> => {
   if (usesLocalRecordings()) return localClearAllRecordings();
 
-  const data = await requestJson<{ manifest: RecordingsManifest }>(apiBase, { method: 'DELETE' });
+  const data = await requestJson<{ manifest: RecordingsManifest }>(resolveApiBase(), {
+    method: 'DELETE',
+  });
   return data.manifest;
 };
 

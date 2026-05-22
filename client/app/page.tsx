@@ -38,6 +38,7 @@ import {
   fetchRecordingBlob,
   getRecordingFileUrl,
   updateRecordingName,
+  readResponseJson,
   resolveUiStateUrl,
   type RecordingEntry,
 } from '@/lib/recordings';
@@ -73,12 +74,31 @@ const noStoreFetchInit: RequestInit = {
   headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
 };
 
+const UI_STATE_FETCH_MS = 12_000;
+
 /** 仅从服务端读取当前页签，不使用 localStorage / sessionStorage */
 const fetchActivePageMemory = async (): Promise<PageKey | null> => {
-  const response = await fetch(resolveUiStateUrl(), noStoreFetchInit);
-  if (!response.ok) throw new Error(`读取页签记忆失败：HTTP ${response.status}`);
-  const data = (await response.json()) as { activePage?: unknown };
-  return typeof data.activePage === 'string' && isPageKey(data.activePage) ? data.activePage : null;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), UI_STATE_FETCH_MS);
+  try {
+    const response = await fetch(resolveUiStateUrl(), {
+      ...noStoreFetchInit,
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    const data = await readResponseJson<{ activePage?: unknown }>(response, text);
+    if (!response.ok) {
+      throw new Error(`读取页签记忆失败：HTTP ${response.status}`);
+    }
+    return typeof data.activePage === 'string' && isPageKey(data.activePage) ? data.activePage : null;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('读取页签记忆超时，请确认当前预览地址下的 /api/ui-state 可访问');
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timer);
+  }
 };
 
 const saveActivePageMemory = async (activePage: PageKey) => {
@@ -90,9 +110,12 @@ const saveActivePageMemory = async (activePage: PageKey) => {
   };
 
   let response = await fetch(url, { ...init, method: 'PUT' });
+  let text = await response.text();
   if (!response.ok && [401, 403, 405].includes(response.status)) {
     response = await fetch(url, { ...init, method: 'POST' });
+    text = await response.text();
   }
+  await readResponseJson(response, text);
   if (!response.ok) throw new Error(`保存页签记忆失败：HTTP ${response.status}`);
 };
 
