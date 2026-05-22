@@ -42,22 +42,12 @@ export const resolveHealthUrl = (): string => {
   return origin ? `${origin}/api/health` : '/api/health';
 };
 
-/** 生产构建需为完整 URL；开发可用 /api/audio */
 export const resolveApiBase = (): string => {
-  const endpoint = process.env.NEXT_PUBLIC_UPLOAD_ENDPOINT?.trim();
   const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-
-  if (endpoint?.startsWith('http://') || endpoint?.startsWith('https://')) {
-    return trimSlash(endpoint);
-  }
-
   if (apiOrigin) {
-    const origin = trimSlash(apiOrigin);
-    if (endpoint?.startsWith('/')) return `${origin}${endpoint}`;
-    return `${origin}/api/audio`;
+    return `${trimSlash(apiOrigin)}/api/audio`;
   }
-
-  return trimSlash(endpoint || '/api/audio');
+  return '/api/audio';
 };
 
 export const usesLocalRecordings = (): boolean => {

@@ -24,7 +24,6 @@ type Props = {
 
 const ENV_VARS: { key: string; label: string }[] = [
   { key: 'NEXT_PUBLIC_API_BASE_URL', label: 'API 基础地址' },
-  { key: 'NEXT_PUBLIC_UPLOAD_ENDPOINT', label: '上传端点' },
 ];
 
 const inputClass =
