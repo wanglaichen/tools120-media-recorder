@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { resolveApiBase, resolveApiOrigin, resolveHealthUrl } from '@/lib/recordings';
 import { APP_VERSION, BUILD_ID } from '@/lib/build-info';
 
