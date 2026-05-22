@@ -68,8 +68,14 @@ type WebAudioWindow = Window &
 const isPageKey = (value: string | null): value is PageKey =>
   value === 'capture' || value === 'convert' || value === 'video' || value === 'image' || value === 'chat';
 
+const noStoreFetchInit: RequestInit = {
+  cache: 'no-store',
+  headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+};
+
+/** 仅从服务端读取当前页签，不使用 localStorage / sessionStorage */
 const fetchActivePageMemory = async (): Promise<PageKey | null> => {
-  const response = await fetch(resolveUiStateUrl(), { cache: 'no-store' });
+  const response = await fetch(resolveUiStateUrl(), noStoreFetchInit);
   if (!response.ok) throw new Error(`读取页签记忆失败：HTTP ${response.status}`);
   const data = (await response.json()) as { activePage?: unknown };
   return typeof data.activePage === 'string' && isPageKey(data.activePage) ? data.activePage : null;
@@ -214,6 +220,7 @@ const getErrorMessage = (error: unknown, fallback: string) => {
 
 export default function HomePage() {
   const [activePage, setActivePage] = useState<PageKey>('capture');
+  /** 为 false 时表示尚未完成「刷新后 GET /api/ui-state」，侧栏不高亮、主区不渲染，避免误像本地缓存 */
   const [activePageMemoryReady, setActivePageMemoryReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [status, setStatus] = useState<RecorderStatus>('idle');
@@ -266,8 +273,13 @@ export default function HomePage() {
     void (async () => {
       try {
         const savedPage = await fetchActivePageMemory();
-        if (!cancelled && savedPage && !activePageTouchedRef.current) {
+        if (!cancelled && !activePageTouchedRef.current && savedPage) {
           setActivePage(savedPage);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : '读取页签记忆失败';
+          setError(message);
         }
       } finally {
         if (!cancelled) {
@@ -907,10 +919,20 @@ export default function HomePage() {
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <div className="flex w-full">
-        <AppSidebar items={pages} activeKey={activePage} onSelect={handleActivePageSelect} />
+        <AppSidebar
+          items={pages}
+          activeKey={activePage}
+          pageReady={activePageMemoryReady}
+          onSelect={handleActivePageSelect}
+        />
 
         <div className="mx-auto min-w-0 w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
-          {activePage === 'capture' ? (
+          {!activePageMemoryReady ? (
+            <div className="flex min-h-[40vh] items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="animate-spin" size={18} />
+              正在从服务器恢复页签…
+            </div>
+          ) : activePage === 'capture' ? (
             <div className="grid gap-6 lg:grid-cols-[1.35fr_0.9fr]">
               <section className="rounded-lg border border-border bg-card p-5 shadow-panel sm:p-6">
                 <div className="flex flex-col gap-5">
