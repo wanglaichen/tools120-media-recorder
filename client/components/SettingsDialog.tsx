@@ -16,15 +16,12 @@ import {
   getMiniMaxConfigEndpoint,
   resetMiniMaxTransportCache,
 } from '@/lib/minimax-transport';
+import { PUBLIC_ENV_DEBUG } from '@/lib/public-env';
 
 type Props = {
   open: boolean;
   onClose: () => void;
 };
-
-const ENV_VARS: { key: string; label: string }[] = [
-  { key: 'NEXT_PUBLIC_API_BASE_URL', label: 'API 基础地址' },
-];
 
 const inputClass =
   'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40';
@@ -191,20 +188,19 @@ export function SettingsDialog({ open, onClose }: Props) {
             </button>
             {envExpanded && (
               <div className="mt-2 space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2.5">
-                {ENV_VARS.map(({ key, label }) => {
-                  const value = process.env[key];
-                  return (
-                    <div key={key} className="flex items-start gap-2 text-xs">
-                      <span className="shrink-0 font-mono text-muted-foreground">{key}</span>
-                      <span className="text-muted-foreground">→</span>
-                      {value ? (
-                        <span className="flex-1 break-all font-mono text-foreground">{value}</span>
-                      ) : (
-                        <span className="flex-1 italic text-muted-foreground/60">(未设置)</span>
-                      )}
-                    </div>
-                  );
-                })}
+                {PUBLIC_ENV_DEBUG.map(({ key, label, value }) => (
+                  <div key={key} className="flex items-start gap-2 text-xs">
+                    <span className="shrink-0 font-mono text-muted-foreground" title={label}>
+                      {key}
+                    </span>
+                    <span className="text-muted-foreground">→</span>
+                    {value ? (
+                      <span className="flex-1 break-all font-mono text-foreground">{value}</span>
+                    ) : (
+                      <span className="flex-1 italic text-muted-foreground/60">(未设置)</span>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </section>
