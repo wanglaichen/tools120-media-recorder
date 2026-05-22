@@ -184,7 +184,7 @@ export function SettingsDialog({ open, onClose }: Props) {
               className="flex w-full items-center gap-2 text-sm font-semibold text-foreground hover:text-primary"
             >
               {envExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              环境变量（调试）
+              环境变量（调试，来自 client/.env.local，由根目录 .env 同步）
             </button>
             {envExpanded && (
               <div className="mt-2 space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2.5">
