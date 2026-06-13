@@ -24,8 +24,8 @@ fi
 node scripts/postprocess-static-export.mjs
 node scripts/verify-static-export.mjs ./client/out
 test -f ./client/out/index.html
-grep -q "聚合工作台" ./client/out/index.html || (echo "client/out/index.html 不是首页产物" && exit 1)
-grep -q "聚合工作台 v" ./client/out/index.html || (echo "client/out/index.html 缺少版本号" && exit 1)
+grep -q "AI聚合工作台" ./client/out/index.html || (echo "client/out/index.html 不是首页产物" && exit 1)
+grep -q "AI聚合工作台 v" ./client/out/index.html || (echo "client/out/index.html 缺少版本号" && exit 1)
 test ! -f ./client/out/404.html || (echo "client/out 仍含 404.html" && exit 1)
 echo "=== EdgeOne build OK (output: client/out) ==="
 ls -la ./client/out | head -15

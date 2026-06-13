@@ -6,6 +6,7 @@
 
 import { assertMiniMaxApiKey, resolveMiniMaxBaseUrl } from '@/lib/ai-provider-config';
 import type { MiniMaxFeature } from '@/lib/minimax-errors';
+import { DEFAULT_SPEECH_VOICE_ID } from '@/lib/speech-voices';
 import {
   getMiniMaxProxyEndpoint,
   useMiniMaxServerProxy,
@@ -215,6 +216,12 @@ async function minimaxFetch(url: string, init: RequestInit, label: string): Prom
         );
       } else if (parsed.error != null) {
         detail = formatMiniMaxErrorMessage(parsed.error, undefined, feature);
+        if (
+          response.status === 403 &&
+          String(parsed.error).includes('不允许代理该 MiniMax 接口')
+        ) {
+          detail += '。请重启 API 服务（8787）：在项目根目录执行 node server/index.mjs 或 .\\start.ps1';
+        }
       } else if (parsed.message != null) {
         detail = formatMiniMaxErrorMessage(parsed.message, undefined, feature);
       }
@@ -427,4 +434,118 @@ export async function createChatCompletion(params: ChatCompletionParams): Promis
     throw new Error('知识问答：响应中缺少回复内容');
   }
   return content.trim();
+}
+
+// --- 文字转语音（同步 HTTP /v1/t2a_v2）---
+
+export type SpeechModel =
+  | 'speech-2.8-hd'
+  | 'speech-2.8-turbo'
+  | 'speech-2.6-hd'
+  | 'speech-2.6-turbo';
+
+export type SpeechVoiceId = string;
+
+export interface SpeechSynthesisParams {
+  text: string;
+  model?: SpeechModel;
+  voice_id?: string;
+  speed?: number;
+}
+
+export interface SpeechSynthesisResult {
+  audioUrl: string;
+  format: string;
+  sampleRate?: number;
+  durationMs?: number;
+}
+
+function hexToAudioBlob(hex: string, mime: string): Blob {
+  const normalized = hex.replace(/\s/g, '');
+  if (!normalized || normalized.length % 2 !== 0) {
+    throw new Error('文字转语音：音频数据格式无效');
+  }
+  const bytes = new Uint8Array(normalized.length / 2);
+  for (let i = 0; i < bytes.length; i += 1) {
+    bytes[i] = parseInt(normalized.slice(i * 2, i * 2 + 2), 16);
+  }
+  return new Blob([bytes], { type: mime });
+}
+
+/** 文字转语音，返回可播放的 blob URL（调用方需在不用时 revokeObjectURL） */
+export async function synthesizeSpeech(params: SpeechSynthesisParams): Promise<SpeechSynthesisResult> {
+  const text = params.text.trim();
+  if (!text) {
+    throw new Error('文字转语音：请输入要合成的文本');
+  }
+  if (text.length > 10000) {
+    throw new Error('文字转语音：单次最多 10000 字符');
+  }
+
+  const url = `${miniMaxBaseUrl()}/v1/t2a_v2`;
+  const payload = {
+    model: params.model ?? 'speech-2.8-hd',
+    text,
+    stream: false,
+    language_boost: 'Chinese',
+    output_format: 'hex',
+    voice_setting: {
+      voice_id: params.voice_id ?? DEFAULT_SPEECH_VOICE_ID,
+      speed: params.speed ?? 1,
+      vol: 1,
+      pitch: 0,
+    },
+    audio_setting: {
+      sample_rate: 32000,
+      bitrate: 128000,
+      format: 'mp3',
+      channel: 1,
+    },
+  };
+
+  const response = await minimaxFetch(
+    url,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    '文字转语音',
+  );
+
+  const data = parseJsonBody<{
+    data?: {
+      audio?: string;
+      status?: number;
+    };
+    extra_info?: {
+      audio_format?: string;
+      audio_sample_rate?: number;
+      audio_length?: number;
+    };
+    base_resp?: MiniMaxBaseResp;
+    error?: unknown;
+  }>(await response.text(), '文字转语音');
+
+  const apiError = normalizeApiErrorDetail(data.error);
+  if (apiError) {
+    throw new Error(`文字转语音：${formatMiniMaxErrorMessage(apiError, undefined, 'chat')}`);
+  }
+  assertBaseResp(data, '文字转语音');
+
+  const hex = data.data?.audio?.trim();
+  if (!hex) {
+    throw new Error('文字转语音：响应中缺少音频数据');
+  }
+
+  const format = data.extra_info?.audio_format ?? 'mp3';
+  const mime = format === 'wav' ? 'audio/wav' : format === 'flac' ? 'audio/flac' : 'audio/mpeg';
+  const blob = hexToAudioBlob(hex, mime);
+
+  return {
+    audioUrl: URL.createObjectURL(blob),
+    format,
+    sampleRate: data.extra_info?.audio_sample_rate,
+    durationMs: data.extra_info?.audio_length,
+  };
 }

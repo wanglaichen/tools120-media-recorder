@@ -5,7 +5,7 @@ import { ServiceInfoBar } from "@/components/ServiceInfoBar";
 const appVersion = process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0";
 
 export const metadata: Metadata = {
-  title: `聚合工作台 v${appVersion}`,
+  title: `AI聚合工作台 v${appVersion}`,
   description: "MediaRecorder + OpenAI Whisper fp32",
 };
 

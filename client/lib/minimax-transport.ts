@@ -16,6 +16,11 @@ export function getMiniMaxProxyEndpoint(): string {
   return base ? `${base}/api/minimax/proxy` : '/api/minimax/proxy';
 }
 
+export function getMiniMaxUploadEndpoint(): string {
+  const base = apiBaseUrl();
+  return base ? `${base}/api/minimax/upload` : '/api/minimax/upload';
+}
+
 export function getMiniMaxConfigEndpoint(): string {
   const base = apiBaseUrl();
   return base ? `${base}/api/minimax/config` : '/api/minimax/config';

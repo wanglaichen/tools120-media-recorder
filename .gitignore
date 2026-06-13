@@ -34,6 +34,7 @@ pnpm-debug.log*
 .browser_profile/
 .vscode/settings.json
 .idea/
+.codex/
 
 # Python
 __pycache__/

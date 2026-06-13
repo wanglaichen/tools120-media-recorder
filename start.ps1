@@ -55,10 +55,11 @@ if (Test-Path $rootEnv) {
   }
 }
 
-Write-Host "Stopping existing processes..."
-Get-Process -Name "node" -ErrorAction SilentlyContinue | Where-Object {
-  $_.Path -like "*tools020*"
-} | Stop-Process -Force -ErrorAction SilentlyContinue
+Write-Host "Stopping existing dev servers on ports 8787 / 5173..."
+foreach ($port in 8787, 5173) {
+  Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+    ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+}
 
 Start-Sleep -Milliseconds 500
 

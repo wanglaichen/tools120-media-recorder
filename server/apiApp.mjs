@@ -16,7 +16,7 @@ const defaultManifest = () => ({
   recordings: [],
 });
 
-const pageKeys = new Set(['capture', 'convert', 'video', 'image', 'chat']);
+const pageKeys = new Set(['capture', 'convert', 'video', 'image', 'speech', 'voice-clone', 'chat']);
 
 const defaultUiState = () => ({
   version: 1,

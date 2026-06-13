@@ -2,8 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight,
-  Check,
   CheckCircle2,
   Circle,
   Copy,
@@ -13,21 +11,14 @@ import {
   Languages,
   List,
   Loader2,
-  Mic,
   Pause,
-  Pencil,
   Play,
   RefreshCw,
   Send,
   ShieldCheck,
   Square,
   Settings,
-  Trash2,
   UploadCloud,
-  Video,
-  ImageIcon,
-  MessageSquare,
-  X,
 } from 'lucide-react';
 import {
   clearAllRecordings,
@@ -45,9 +36,21 @@ import {
 import { RecordingList } from '@/components/RecordingList';
 import { RecordingPickerModal } from '@/components/RecordingPickerModal';
 import { AppSidebar, type AppPageKey } from '@/components/AppSidebar';
+import { AppCategoryTabs } from '@/components/AppCategoryTabs';
 import { SettingsDialog } from '@/components/SettingsDialog';
+import {
+  APP_CATEGORY_TABS,
+  getCategoryForPage,
+  getDefaultPageForCategory,
+  getNavItemsByCategory,
+  loadAppCategory,
+  saveAppCategory,
+  type AppCategoryId,
+} from '@/lib/app-nav';
 import { ImageGen } from '@/components/ImageGen';
 import { KnowledgeChat } from '@/components/KnowledgeChat';
+import { SpeechGen } from '@/components/SpeechGen';
+import { VoiceCloneGen } from '@/components/VoiceCloneGen';
 import { VideoGen } from '@/components/VideoGen';
 import type { RecordingClip } from '@/types/recording';
 import type {
@@ -67,7 +70,13 @@ type WebAudioWindow = Window &
   };
 
 const isPageKey = (value: string | null): value is PageKey =>
-  value === 'capture' || value === 'convert' || value === 'video' || value === 'image' || value === 'chat';
+  value === 'capture' ||
+  value === 'convert' ||
+  value === 'video' ||
+  value === 'image' ||
+  value === 'speech' ||
+  value === 'voice-clone' ||
+  value === 'chat';
 
 const noStoreFetchInit: RequestInit = {
   cache: 'no-store',
@@ -242,6 +251,7 @@ const getErrorMessage = (error: unknown, fallback: string) => {
 };
 
 export default function HomePage() {
+  const [activeCategory, setActiveCategory] = useState<AppCategoryId>('local');
   const [activePage, setActivePage] = useState<PageKey>('capture');
   /** 为 false 时表示尚未完成「刷新后 GET /api/ui-state」，侧栏不高亮、主区不渲染，避免误像本地缓存 */
   const [activePageMemoryReady, setActivePageMemoryReady] = useState(false);
@@ -298,6 +308,10 @@ export default function HomePage() {
         const savedPage = await fetchActivePageMemory();
         if (!cancelled && !activePageTouchedRef.current && savedPage) {
           setActivePage(savedPage);
+          setActiveCategory(getCategoryForPage(savedPage));
+        } else if (!cancelled) {
+          const savedCategory = loadAppCategory();
+          if (savedCategory) setActiveCategory(savedCategory);
         }
       } catch (err) {
         if (!cancelled) {
@@ -319,11 +333,36 @@ export default function HomePage() {
   const handleActivePageSelect = (page: PageKey) => {
     activePageTouchedRef.current = true;
     setActivePage(page);
+    const category = getCategoryForPage(page);
+    setActiveCategory(category);
+    saveAppCategory(category);
     void saveActivePageMemory(page).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : '保存页签记忆失败';
       setError(message);
     });
   };
+
+  const handleCategoryChange = (category: AppCategoryId) => {
+    setActiveCategory(category);
+    saveAppCategory(category);
+    const items = getNavItemsByCategory(category);
+    if (!items.some((item) => item.key === activePage)) {
+      const next = getDefaultPageForCategory(category);
+      activePageTouchedRef.current = true;
+      setActivePage(next);
+      void saveActivePageMemory(next);
+    }
+  };
+
+  const sidebarItems = useMemo(
+    () => getNavItemsByCategory(activeCategory),
+    [activeCategory],
+  );
+
+  const sidebarSectionTitle = useMemo(
+    () => APP_CATEGORY_TABS.find((tab) => tab.id === activeCategory)?.label ?? '',
+    [activeCategory],
+  );
 
   const canRecord = status === 'idle' || status === 'ready' || status === 'stopped' || status === 'error';
   const canPause = status === 'recording' && mediaRecorderRef.current?.state === 'recording';
@@ -354,17 +393,6 @@ export default function HomePage() {
         return { label: '待授权', color: 'bg-slate-400', tone: 'text-slate-700' };
     }
   }, [status]);
-
-  const pages = useMemo(
-    () => [
-      { key: 'capture' as const, label: '音频采集', detail: '麦克风录音', icon: Mic },
-      { key: 'convert' as const, label: '音频转换', detail: 'Whisper 转写', icon: Languages },
-      { key: 'video' as const, label: '文字转视频', detail: 'MiniMax 视频', icon: Video },
-      { key: 'image' as const, label: '文字转图片', detail: 'MiniMax 图片', icon: ImageIcon },
-      { key: 'chat' as const, label: '知识问答', detail: '多会话对话', icon: MessageSquare },
-    ],
-    [],
-  );
 
   const bars = useMemo(
     () =>
@@ -914,12 +942,11 @@ export default function HomePage() {
       <div className="border-b border-border bg-card">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <FileAudio size={22} strokeWidth={2.3} />
+            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
+              <FileAudio size={18} strokeWidth={2.3} />
             </div>
             <div>
-              <h1 className="text-xl font-semibold tracking-normal text-foreground sm:text-2xl">聚合工作台</h1>
-              <p className="mt-1 text-sm text-muted-foreground">MediaRecorder + OpenAI Whisper fp32</p>
+              <h1 className="text-xl font-semibold tracking-normal text-foreground sm:text-2xl">AI聚合工作台</h1>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -939,14 +966,17 @@ export default function HomePage() {
         </div>
       </div>
 
+      <AppCategoryTabs activeCategory={activeCategory} onChange={handleCategoryChange} />
+
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <div className="flex w-full">
         <AppSidebar
-          items={pages}
+          items={sidebarItems}
           activeKey={activePage}
           pageReady={activePageMemoryReady}
           onSelect={handleActivePageSelect}
+          sectionTitle={sidebarSectionTitle}
         />
 
         <div className="mx-auto min-w-0 w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
@@ -1367,6 +1397,10 @@ export default function HomePage() {
             <VideoGen />
           ) : activePage === 'image' ? (
             <ImageGen />
+          ) : activePage === 'speech' ? (
+            <SpeechGen />
+          ) : activePage === 'voice-clone' ? (
+            <VoiceCloneGen />
           ) : activePage === 'chat' ? (
             <KnowledgeChat />
           ) : null}

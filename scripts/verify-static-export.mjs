@@ -44,22 +44,22 @@ if (fs.existsSync(envProd)) {
 const is404Page =
   html.includes('next-error-h1') &&
   html.includes('This page could not be found') &&
-  !html.includes('聚合工作台');
+  !html.includes('AI聚合工作台');
 
 if (is404Page) {
   console.error('[verify-static-export] index.html 内容是 404 页，构建异常');
   process.exit(1);
 }
 
-if (!html.includes('聚合工作台')) {
-  console.error('[verify-static-export] index.html 缺少「聚合工作台」');
+if (!html.includes('AI聚合工作台')) {
+  console.error('[verify-static-export] index.html 缺少「AI聚合工作台」');
   process.exit(1);
 }
 
 const hasVersion =
   html.includes(expectedVersion) ||
   html.includes(`v${expectedVersion}`) ||
-  html.includes(`聚合工作台 v${expectedVersion}`);
+  html.includes(`AI聚合工作台 v${expectedVersion}`);
 
 const hasBuildId = expectedBuildId ? html.includes(expectedBuildId) : true;
 
