@@ -30,6 +30,8 @@ import {
 } from '@/lib/chat-storage';
 
 const MODEL_OPTIONS: { value: ChatModel; label: string }[] = [
+  { value: 'MiniMax-M3', label: 'MiniMax-M3（Plus · 推荐）' },
+  { value: 'MiniMax-M3-highspeed', label: 'M3 极速' },
   { value: 'MiniMax-M2.7', label: 'MiniMax-M2.7' },
   { value: 'MiniMax-M2.7-highspeed', label: 'M2.7 极速' },
   { value: 'MiniMax-M2.5', label: 'MiniMax-M2.5' },

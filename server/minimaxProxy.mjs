@@ -15,6 +15,9 @@ const ALLOWED_PREFIXES = [
   '/v1/image_generation',
   '/v1/t2a_v2',
   '/v1/voice_clone',
+  '/v1/music_generation',
+  '/v1/music_cover_preprocess',
+  '/v1/lyrics_generation',
 ];
 const ALLOWED_GET_PREFIXES = ['/v1/query/video_generation', '/v1/files/retrieve'];
 

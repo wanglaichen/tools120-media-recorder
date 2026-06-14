@@ -1,10 +1,13 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   AudioWaveform,
+  Eye,
+  FileText,
   ImageIcon,
   Languages,
   MessageSquare,
   Mic,
+  Music2,
   Video,
   Volume2,
 } from 'lucide-react';
@@ -16,6 +19,9 @@ export type AppPageKey =
   | 'image'
   | 'speech'
   | 'voice-clone'
+  | 'music'
+  | 'vision'
+  | 'm3-long'
   | 'chat';
 
 export type AppCategoryId = 'local' | 'minimax';
@@ -37,7 +43,7 @@ export const APP_CATEGORY_TABS: {
   {
     id: 'minimax',
     label: 'MiniMax',
-    hint: '需 MiniMax API Key：视频 / 图片 / 语音 / 克隆 / 知识问答',
+    hint: 'Plus 档：视频 / 图片 / 语音 / 克隆 / 音乐 / M3 多模态 / 长文 / 问答',
   },
 ];
 
@@ -85,6 +91,27 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
     category: 'minimax',
   },
   {
+    key: 'music',
+    label: '音乐生成',
+    detail: '歌词 + 风格',
+    icon: Music2,
+    category: 'minimax',
+  },
+  {
+    key: 'vision',
+    label: '多模态理解',
+    detail: 'M3 图 / 视频',
+    icon: Eye,
+    category: 'minimax',
+  },
+  {
+    key: 'm3-long',
+    label: '长文分析',
+    detail: 'M3 · 1M 上下文',
+    icon: FileText,
+    category: 'minimax',
+  },
+  {
     key: 'chat',
     label: '知识问答',
     detail: '多会话对话',
@@ -110,6 +137,24 @@ export function getDefaultPageForCategory(category: AppCategoryId): AppPageKey {
 }
 
 export const APP_CATEGORY_STORAGE_KEY = 'tools120-app-category-v1';
+export const APP_ACTIVE_PAGE_STORAGE_KEY = 'tools120-app-active-page-v1';
+
+const PAGE_KEY_SET = new Set<AppPageKey>(APP_NAV_ITEMS.map((item) => item.key));
+
+export function isAppPageKey(value: string | null | undefined): value is AppPageKey {
+  return typeof value === 'string' && PAGE_KEY_SET.has(value as AppPageKey);
+}
+
+export function loadActivePage(): AppPageKey | null {
+  if (typeof window === 'undefined') return null;
+  const raw = localStorage.getItem(APP_ACTIVE_PAGE_STORAGE_KEY);
+  return isAppPageKey(raw) ? raw : null;
+}
+
+export function saveActivePage(page: AppPageKey): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(APP_ACTIVE_PAGE_STORAGE_KEY, page);
+}
 
 export function loadAppCategory(): AppCategoryId | null {
   if (typeof window === 'undefined') return null;

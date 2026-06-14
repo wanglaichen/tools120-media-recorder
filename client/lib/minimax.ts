@@ -5,6 +5,7 @@
  */
 
 import { assertMiniMaxApiKey, resolveMiniMaxBaseUrl } from '@/lib/ai-provider-config';
+import { formatLyricsForSinging } from '@/lib/music-audio';
 import type { MiniMaxFeature } from '@/lib/minimax-errors';
 import { DEFAULT_SPEECH_VOICE_ID } from '@/lib/speech-voices';
 import {
@@ -380,6 +381,8 @@ export async function generateImages(params: ImageCreateParams): Promise<string[
 // --- 文本对话（OpenAI 兼容 /v1/chat/completions）---
 
 export type ChatModel =
+  | 'MiniMax-M3'
+  | 'MiniMax-M3-highspeed'
   | 'MiniMax-M2.7'
   | 'MiniMax-M2.7-highspeed'
   | 'MiniMax-M2.5'
@@ -548,4 +551,373 @@ export async function synthesizeSpeech(params: SpeechSynthesisParams): Promise<S
     sampleRate: data.extra_info?.audio_sample_rate,
     durationMs: data.extra_info?.audio_length,
   };
+}
+
+// --- 音乐生成（/v1/music_generation，Plus 档可用）---
+
+export type MusicGenMode = 'vocal' | 'instrumental' | 'cover';
+
+export type MusicModel = 'music-2.6' | 'music-cover';
+
+export type MusicCoverProgressStep = 'fetch' | 'lyrics' | 'generate';
+
+export interface MusicGenerationParams {
+  mode: MusicGenMode;
+  prompt: string;
+  lyrics?: string;
+  vocal_style?: string;
+  lyrics_optimizer?: boolean;
+  /** @deprecated 翻唱请用 original_audio_base64 */
+  audio_base64?: string;
+  cover_use_reference_lyrics?: boolean;
+  song_title?: string;
+  artist_name?: string;
+  cover_style_note?: string;
+  /** 原曲参考音频（搜索/下载/上传），用于 music-cover 保留旋律 */
+  original_audio_base64?: string;
+  onCoverProgress?: (step: MusicCoverProgressStep) => void;
+}
+
+export interface MusicGenerationResult {
+  audioUrl: string;
+  format: string;
+  durationMs?: number;
+  model: MusicModel;
+  /** 翻唱时若自动生成了歌词，返回实际使用的歌词 */
+  resolvedLyrics?: string;
+}
+
+function extractSongTitleFromPrompt(prompt: string): string | undefined {
+  const book = prompt.match(/《([^》]{1,40})》/);
+  if (book?.[1]?.trim()) return book[1].trim();
+  const quote = prompt.match(/「([^」]{1,40})」/);
+  if (quote?.[1]?.trim()) return quote[1].trim();
+  return undefined;
+}
+
+const KNOWN_SONG_MUSIC_STYLES: Record<string, string> = {
+  大海: '张雨生《大海》, 华语流行摇滚, 经典前奏, 电吉他, 鼓组, 贝斯, 弦乐, 澎湃情感, 高亢真假声',
+};
+
+function buildTargetSongMusicPrompt(userIntent: string, voiceStyle?: string): string {
+  const title = extractSongTitleFromPrompt(userIntent);
+  const parts: string[] = [
+    '完整歌曲',
+    '专业编曲',
+    '旋律性演唱',
+    '禁止朗诵',
+    '禁止念白',
+    '禁止说话式朗读',
+  ];
+  if (title && KNOWN_SONG_MUSIC_STYLES[title]) {
+    parts.push(KNOWN_SONG_MUSIC_STYLES[title]);
+  } else if (title) {
+    parts.push(`经典歌曲《${title}》`, '华语流行', '抒情演唱');
+  } else {
+    parts.push('华语流行', '抒情演唱');
+  }
+  if (voiceStyle?.trim()) {
+    parts.push(voiceStyle.trim());
+  } else {
+    parts.push('中文男声', '贴近参考录音声线');
+  }
+  return parts.join(', ').slice(0, 2000);
+}
+
+function buildVoiceCoverStylePrompt(
+  artist?: string,
+  title?: string,
+  voiceStyle?: string,
+  note?: string,
+): string {
+  const parts = [
+    '保留原曲旋律',
+    '完整编曲翻唱',
+    '旋律性演唱',
+    '禁止朗诵',
+    '禁止念白',
+  ];
+  const a = artist?.trim();
+  const t = title?.trim();
+  if (a && t) parts.push(`${a}《${t}》经典版`);
+  else if (t) parts.push(`《${t}》`);
+  if (voiceStyle?.trim()) parts.push(voiceStyle.trim());
+  else parts.push('贴近用户上传声线');
+  if (note?.trim()) parts.push(note.trim());
+  const text = parts.join(', ');
+  return text.length >= 10 ? text.slice(0, 300) : `${text}, 流行翻唱`.slice(0, 300);
+}
+
+async function generateLyricsForCover(userPrompt: string): Promise<string> {
+  const title = extractSongTitleFromPrompt(userPrompt);
+  const chatPrompt = title
+    ? `请输出中文歌曲《${title}》的完整歌词，供 AI 音乐模型演唱（不是朗诵）。要求：
+1. 只输出歌词正文，不要标题、解释或 markdown
+2. 使用 [Verse]、[Chorus]、[Bridge] 等英文结构标签，标签独占一行
+3. 每句歌词单独一行，用换行分隔，尽量贴近原曲经典段落与名句
+4. 总长度 10–900 字
+
+用户说明：${userPrompt}`
+    : `请输出完整中文歌词，只输出歌词正文。每句单独一行，使用 [Verse] [Chorus] 等标签，10–900 字：\n${userPrompt}`;
+
+  const lyrics = await createChatCompletion({
+    model: 'MiniMax-M2.7',
+    messages: [{ role: 'user', content: chatPrompt }],
+    max_tokens: 2500,
+  });
+
+  const formatted = formatLyricsForSinging(lyrics);
+  if (!formatted || formatted.length < 10) {
+    throw new Error('翻唱：未能根据描述生成足够长度的歌词，请手动填写目标歌曲歌词');
+  }
+  if (formatted.length > 1000) {
+    return formatted.slice(0, 1000);
+  }
+  return formatted;
+}
+
+async function requestMusicGeneration(payload: Record<string, unknown>): Promise<MusicGenerationResult> {
+  const response = await minimaxFetch(
+    `${miniMaxBaseUrl()}/v1/music_generation`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    '音乐生成',
+  );
+
+  const data = parseJsonBody<{
+    data?: { audio?: string; status?: number };
+    extra_info?: { music_duration?: number; music_format?: string };
+    base_resp?: MiniMaxBaseResp;
+  }>(await response.text(), '音乐生成');
+
+  assertBaseResp(data, '音乐生成');
+
+  const status = data.data?.status;
+  if (status !== undefined && status !== 2) {
+    throw new Error(`音乐生成：任务未完成（status=${status}），请稍后重试或缩短歌词`);
+  }
+
+  const hex = data.data?.audio?.trim();
+  if (!hex) {
+    throw new Error('音乐生成：响应中缺少音频数据');
+  }
+
+  const format = data.extra_info?.music_format ?? 'mp3';
+  const mime = format === 'wav' ? 'audio/wav' : 'audio/mpeg';
+  const blob = hexToAudioBlob(hex, mime);
+  const model = payload.model === 'music-cover' ? 'music-cover' : 'music-2.6';
+
+  return {
+    audioUrl: URL.createObjectURL(blob),
+    format,
+    durationMs: data.extra_info?.music_duration,
+    model,
+  };
+}
+
+/** 文生音乐 / 纯音乐 / 翻唱（music-cover + 参考音频） */
+export async function generateMusic(params: MusicGenerationParams): Promise<MusicGenerationResult> {
+  const mode = params.mode;
+  const payload: Record<string, unknown> = {
+    output_format: 'hex',
+    audio_setting: {
+      sample_rate: 44100,
+      bitrate: 256000,
+      format: 'mp3',
+    },
+  };
+
+  let model: MusicModel = 'music-2.6';
+
+  if (mode === 'cover') {
+    const songTitle = params.song_title?.trim() || extractSongTitleFromPrompt(params.prompt) || '';
+    const artistName = params.artist_name?.trim() || '';
+    const styleNote = params.cover_style_note?.trim() || '';
+    const userIntent = params.prompt.trim();
+    const originalB64 = params.original_audio_base64?.trim();
+    const legacyB64 = params.audio_base64?.trim();
+
+    if (!songTitle && userIntent.length < 10) {
+      throw new Error('翻唱：请填写歌曲名，或填写至少 10 字的翻唱描述');
+    }
+
+    const userLyrics = params.lyrics?.trim();
+    if (userLyrics && (userLyrics.length < 10 || userLyrics.length > 1000)) {
+      throw new Error('翻唱：歌词长度需 10–1000 个字符，或留空从原曲识别/自动生成');
+    }
+
+    const audioSetting = payload.audio_setting;
+    const coverPrompt = buildVoiceCoverStylePrompt(
+      artistName,
+      songTitle,
+      params.vocal_style,
+      styleNote || userIntent,
+    );
+
+    // 有原曲参考：music-cover（保留旋律 + 你的声线描述）
+    const referenceB64 = originalB64 || (params.cover_use_reference_lyrics ? legacyB64 : '');
+    if (referenceB64) {
+      params.onCoverProgress?.('generate');
+      const coverPayload: Record<string, unknown> = {
+        model: 'music-cover',
+        prompt: coverPrompt,
+        audio_base64: referenceB64,
+        output_format: 'hex',
+        audio_setting: audioSetting,
+      };
+      if (userLyrics) {
+        coverPayload.lyrics = formatLyricsForSinging(userLyrics);
+      }
+      const result = await requestMusicGeneration(coverPayload);
+      return {
+        ...result,
+        resolvedLyrics: userLyrics ? formatLyricsForSinging(userLyrics) : undefined,
+        model: 'music-cover',
+      };
+    }
+
+    if (!params.vocal_style?.trim() && !legacyB64) {
+      throw new Error('翻唱：请上传你的声线参考，或填写声线描述');
+    }
+
+    // 无原曲：music-2.6 按歌名生成（需先搜索原曲或粘贴链接）
+    const intent =
+      userIntent ||
+      (artistName && songTitle
+        ? `用我的声音翻唱${artistName}的《${songTitle}》`
+        : songTitle
+          ? `用我的声音翻唱《${songTitle}》`
+          : '');
+    if (intent.length < 10) {
+      throw new Error('翻唱：请先点击「搜索并获取原曲」，或粘贴原曲链接');
+    }
+
+    let finalLyrics = userLyrics ? formatLyricsForSinging(userLyrics) : '';
+    if (!finalLyrics) {
+      params.onCoverProgress?.('lyrics');
+      finalLyrics = await generateLyricsForCover(intent);
+    }
+
+    const musicPrompt = buildTargetSongMusicPrompt(intent, params.vocal_style);
+    params.onCoverProgress?.('generate');
+    const result = await requestMusicGeneration({
+      model: 'music-2.6',
+      prompt: musicPrompt,
+      lyrics: finalLyrics,
+      output_format: 'hex',
+      audio_setting: audioSetting,
+    });
+    return { ...result, resolvedLyrics: finalLyrics, model: 'music-2.6' };
+  } else if (mode === 'instrumental') {
+    const styleParts = [params.prompt.trim(), params.vocal_style?.trim()].filter(Boolean);
+    const prompt = styleParts.join(', ');
+    if (!prompt) {
+      throw new Error('纯音乐：请填写风格描述');
+    }
+    payload.model = model;
+    payload.prompt = prompt;
+    payload.is_instrumental = true;
+  } else {
+    const styleParts = [params.prompt.trim(), params.vocal_style?.trim()].filter(Boolean);
+    const prompt = styleParts.join(', ');
+    const lyrics = params.lyrics?.trim();
+    if (!lyrics && !params.lyrics_optimizer) {
+      throw new Error('有人声：请填写歌词，或开启 AI 优化歌词');
+    }
+    payload.model = model;
+    if (prompt) payload.prompt = prompt;
+    if (lyrics) payload.lyrics = lyrics;
+    if (params.lyrics_optimizer) payload.lyrics_optimizer = true;
+  }
+
+  return requestMusicGeneration({ ...payload, model });
+}
+
+// --- M3 多模态对话（图片 / 视频理解）---
+
+export type MultimodalContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+  | { type: 'video_url'; video_url: { url: string } };
+
+export type MultimodalMessage = {
+  role: ChatRole;
+  content: string | MultimodalContentPart[];
+};
+
+export interface MultimodalCompletionParams {
+  messages: MultimodalMessage[];
+  model?: 'MiniMax-M3' | 'MiniMax-M3-highspeed';
+  max_tokens?: number;
+}
+
+/** M3 多模态：支持 image_url / video_url 与文本混合输入 */
+export async function createMultimodalCompletion(
+  params: MultimodalCompletionParams,
+): Promise<string> {
+  const url = `${miniMaxBaseUrl()}/v1/chat/completions`;
+  const payload = {
+    model: params.model ?? 'MiniMax-M3',
+    messages: params.messages,
+    max_tokens: params.max_tokens ?? 4096,
+  };
+
+  const response = await minimaxFetch(
+    url,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    '多模态理解',
+  );
+
+  const data = parseJsonBody<{
+    choices?: Array<{ message?: { content?: string } }>;
+    base_resp?: MiniMaxBaseResp;
+    error?: unknown;
+  }>(await response.text(), '多模态理解');
+
+  const apiError = normalizeApiErrorDetail(data.error);
+  if (apiError) {
+    throw new Error(`多模态理解：${formatMiniMaxErrorMessage(apiError, undefined, 'chat')}`);
+  }
+  assertBaseResp(data, '多模态理解');
+
+  const content = data.choices?.[0]?.message?.content;
+  if (!content?.trim()) {
+    throw new Error('多模态理解：响应中缺少回复内容');
+  }
+  return content.trim();
+}
+
+/** M3 长文分析（1M 上下文，适合粘贴长文档） */
+export async function createM3LongAnalysis(params: {
+  document: string;
+  question: string;
+  model?: 'MiniMax-M3' | 'MiniMax-M3-highspeed';
+}): Promise<string> {
+  const doc = params.document.trim();
+  const question = params.question.trim();
+  if (!doc) throw new Error('长文分析：请粘贴或输入待分析文本');
+  if (!question) throw new Error('长文分析：请输入分析问题');
+
+  return createMultimodalCompletion({
+    model: params.model ?? 'MiniMax-M3',
+    max_tokens: 8192,
+    messages: [
+      {
+        role: 'system',
+        content:
+          '你是擅长长文阅读与结构化分析的助手。请基于用户提供的全文作答，引用关键信息，不要编造文中不存在的内容。',
+      },
+      {
+        role: 'user',
+        content: `【待分析全文】\n${doc}\n\n【问题】\n${question}`,
+      },
+    ],
+  });
 }

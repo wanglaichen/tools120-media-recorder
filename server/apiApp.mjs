@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import multer from 'multer';
 import { attachMiniMaxProxy } from './minimaxProxy.mjs';
+import { attachMusicSource } from './musicSource.mjs';
 import {
   attachChatSessions,
   createFileChatStore,
@@ -16,7 +17,18 @@ const defaultManifest = () => ({
   recordings: [],
 });
 
-const pageKeys = new Set(['capture', 'convert', 'video', 'image', 'speech', 'voice-clone', 'chat']);
+const pageKeys = new Set([
+  'capture',
+  'convert',
+  'video',
+  'image',
+  'speech',
+  'voice-clone',
+  'music',
+  'vision',
+  'm3-long',
+  'chat',
+]);
 
 const defaultUiState = () => ({
   version: 1,
@@ -199,13 +211,15 @@ export function createApiApp(opts) {
       },
     }),
   );
+  const minimaxRouter = express.Router();
+  minimaxRouter.use(express.json({ limit: '64mb' }));
+  attachMiniMaxProxy(minimaxRouter);
+  // 多模态请求含 base64 图片，必须在 1mb 全局 JSON 解析之前挂载
+  app.use('/api', minimaxRouter);
+
   app.use(express.json({ limit: '1mb' }));
 
   const router = express.Router();
-  const minimaxRouter = express.Router();
-  minimaxRouter.use(express.json({ limit: '32mb' }));
-  attachMiniMaxProxy(minimaxRouter);
-  router.use(minimaxRouter);
 
   if (opts.chatSessionsPath) {
     attachChatSessions(router, createFileChatStore(opts.chatSessionsPath));
@@ -370,6 +384,8 @@ export function createApiApp(opts) {
     res.setHeader('Content-Type', entry.mimeType || 'audio/webm');
     res.send(buffer);
   });
+
+  attachMusicSource(router);
 
   app.use('/api', router);
   app.use(router);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   CheckCircle2,
   Circle,
@@ -37,19 +37,26 @@ import { RecordingList } from '@/components/RecordingList';
 import { RecordingPickerModal } from '@/components/RecordingPickerModal';
 import { AppSidebar, type AppPageKey } from '@/components/AppSidebar';
 import { AppCategoryTabs } from '@/components/AppCategoryTabs';
+import { AppMinimaxFeatureTabs } from '@/components/AppMinimaxFeatureTabs';
 import { SettingsDialog } from '@/components/SettingsDialog';
 import {
   APP_CATEGORY_TABS,
   getCategoryForPage,
   getDefaultPageForCategory,
   getNavItemsByCategory,
+  isAppPageKey,
+  loadActivePage,
   loadAppCategory,
+  saveActivePage,
   saveAppCategory,
   type AppCategoryId,
 } from '@/lib/app-nav';
 import { ImageGen } from '@/components/ImageGen';
 import { KnowledgeChat } from '@/components/KnowledgeChat';
+import { M3LongChat } from '@/components/M3LongChat';
+import { MusicGen } from '@/components/MusicGen';
 import { SpeechGen } from '@/components/SpeechGen';
+import { VisionChat } from '@/components/VisionChat';
 import { VoiceCloneGen } from '@/components/VoiceCloneGen';
 import { VideoGen } from '@/components/VideoGen';
 import type { RecordingClip } from '@/types/recording';
@@ -69,14 +76,7 @@ type WebAudioWindow = Window &
     webkitAudioContext?: typeof AudioContext;
   };
 
-const isPageKey = (value: string | null): value is PageKey =>
-  value === 'capture' ||
-  value === 'convert' ||
-  value === 'video' ||
-  value === 'image' ||
-  value === 'speech' ||
-  value === 'voice-clone' ||
-  value === 'chat';
+const isPageKey = (value: string | null): value is PageKey => isAppPageKey(value);
 
 const noStoreFetchInit: RequestInit = {
   cache: 'no-store',
@@ -85,7 +85,7 @@ const noStoreFetchInit: RequestInit = {
 
 const UI_STATE_FETCH_MS = 12_000;
 
-/** 仅从服务端读取当前页签，不使用 localStorage / sessionStorage */
+/** 从服务端读取页签；本地以 localStorage 为主，API 仅作补充同步 */
 const fetchActivePageMemory = async (): Promise<PageKey | null> => {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), UI_STATE_FETCH_MS);
@@ -253,7 +253,6 @@ const getErrorMessage = (error: unknown, fallback: string) => {
 export default function HomePage() {
   const [activeCategory, setActiveCategory] = useState<AppCategoryId>('local');
   const [activePage, setActivePage] = useState<PageKey>('capture');
-  /** 为 false 时表示尚未完成「刷新后 GET /api/ui-state」，侧栏不高亮、主区不渲染，避免误像本地缓存 */
   const [activePageMemoryReady, setActivePageMemoryReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [status, setStatus] = useState<RecorderStatus>('idle');
@@ -300,28 +299,31 @@ export default function HomePage() {
   const loadedModelIdRef = useRef<WhisperModelId | null>(null);
   const activePageTouchedRef = useRef(false);
 
+  useLayoutEffect(() => {
+    const localPage = loadActivePage();
+    if (localPage) {
+      setActivePage(localPage);
+      setActiveCategory(getCategoryForPage(localPage));
+    } else {
+      const savedCategory = loadAppCategory();
+      if (savedCategory) setActiveCategory(savedCategory);
+    }
+    setActivePageMemoryReady(true);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
     void (async () => {
       try {
         const savedPage = await fetchActivePageMemory();
-        if (!cancelled && !activePageTouchedRef.current && savedPage) {
+        if (!cancelled && !activePageTouchedRef.current && savedPage && !loadActivePage()) {
           setActivePage(savedPage);
           setActiveCategory(getCategoryForPage(savedPage));
-        } else if (!cancelled) {
-          const savedCategory = loadAppCategory();
-          if (savedCategory) setActiveCategory(savedCategory);
+          saveActivePage(savedPage);
         }
-      } catch (err) {
-        if (!cancelled) {
-          const message = err instanceof Error ? err.message : '读取页签记忆失败';
-          setError(message);
-        }
-      } finally {
-        if (!cancelled) {
-          setActivePageMemoryReady(true);
-        }
+      } catch {
+        /* 无 API 时依赖 localStorage，已在 useLayoutEffect 中恢复 */
       }
     })();
 
@@ -330,16 +332,20 @@ export default function HomePage() {
     };
   }, []);
 
+  const persistActivePage = (page: PageKey) => {
+    saveActivePage(page);
+    void saveActivePageMemory(page).catch(() => {
+      /* 静态站点无 /api/ui-state 时仅本地记忆 */
+    });
+  };
+
   const handleActivePageSelect = (page: PageKey) => {
     activePageTouchedRef.current = true;
     setActivePage(page);
     const category = getCategoryForPage(page);
     setActiveCategory(category);
     saveAppCategory(category);
-    void saveActivePageMemory(page).catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : '保存页签记忆失败';
-      setError(message);
-    });
+    persistActivePage(page);
   };
 
   const handleCategoryChange = (category: AppCategoryId) => {
@@ -350,7 +356,7 @@ export default function HomePage() {
       const next = getDefaultPageForCategory(category);
       activePageTouchedRef.current = true;
       setActivePage(next);
-      void saveActivePageMemory(next);
+      persistActivePage(next);
     }
   };
 
@@ -968,6 +974,10 @@ export default function HomePage() {
 
       <AppCategoryTabs activeCategory={activeCategory} onChange={handleCategoryChange} />
 
+      {activeCategory === 'minimax' && activePageMemoryReady && (
+        <AppMinimaxFeatureTabs activePage={activePage} onSelect={handleActivePageSelect} />
+      )}
+
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <div className="flex w-full">
@@ -1401,6 +1411,12 @@ export default function HomePage() {
             <SpeechGen />
           ) : activePage === 'voice-clone' ? (
             <VoiceCloneGen />
+          ) : activePage === 'music' ? (
+            <MusicGen />
+          ) : activePage === 'vision' ? (
+            <VisionChat />
+          ) : activePage === 'm3-long' ? (
+            <M3LongChat />
           ) : activePage === 'chat' ? (
             <KnowledgeChat />
           ) : null}
