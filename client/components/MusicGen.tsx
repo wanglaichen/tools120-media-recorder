@@ -21,6 +21,7 @@ import {
   previewMusicLabel,
   removeMusicHistoryItem,
   saveMusicDraft,
+  type CoverVoiceInput,
   type MusicHistoryItem,
 } from '@/lib/music-storage';
 import { fetchManifest, fetchRecordingBlob, getRecordingFileUrl, type RecordingEntry } from '@/lib/recordings';
@@ -43,6 +44,11 @@ const STYLE_EXAMPLES = [
 const VOCAL_EXAMPLES = ['温暖男声, 中文', '甜美女声, 流行', '烟嗓, 摇滚, 英文'];
 
 const COVER_SONG_DEFAULT = { title: '大海', artist: '张雨生' };
+
+const COVER_VOICE_TABS: { value: CoverVoiceInput; label: string; hint: string }[] = [
+  { value: 'sample', label: '声线样本', hint: '上传本人录音' },
+  { value: 'describe', label: '声线描述', hint: '文字描述音色' },
+];
 
 const LYRICS_EXAMPLE = `[verse]
 街灯微亮 晚风轻抚
@@ -102,6 +108,7 @@ export function MusicGen() {
   const [lyricsOptimizer, setLyricsOptimizer] = useState(false);
   const [songTitle, setSongTitle] = useState(COVER_SONG_DEFAULT.title);
   const [artistName, setArtistName] = useState(COVER_SONG_DEFAULT.artist);
+  const [coverVoiceInput, setCoverVoiceInput] = useState<CoverVoiceInput>('sample');
   const [coverStyleNote, setCoverStyleNote] = useState('');
   const [sourceUrl, setSourceUrl] = useState('');
   const [sourceLoading, setSourceLoading] = useState(false);
@@ -132,8 +139,8 @@ export function MusicGen() {
   const originalSongUrlRef = useRef('');
 
   const isWorking = status === 'generating';
-  /** 声线描述仅在上传「我的声线」后生效；仅上传原曲时不可用 */
-  const voiceStyleActive = Boolean(referenceBlob);
+  const useVoiceSample = coverVoiceInput === 'sample';
+  const useVoiceDescribe = coverVoiceInput === 'describe';
 
   useEffect(() => {
     historyRef.current = history;
@@ -156,6 +163,9 @@ export function MusicGen() {
         if (typeof draft.artistName === 'string') setArtistName(draft.artistName);
         if (typeof draft.coverStyleNote === 'string') setCoverStyleNote(draft.coverStyleNote);
         if (typeof draft.sourceUrl === 'string') setSourceUrl(draft.sourceUrl);
+        if (draft.coverVoiceInput === 'sample' || draft.coverVoiceInput === 'describe') {
+          setCoverVoiceInput(draft.coverVoiceInput);
+        }
         if (draft.mode === 'instrumental') {
           setPrompt(draft.prompt || STYLE_EXAMPLES[0]);
         }
@@ -195,6 +205,7 @@ export function MusicGen() {
         artistName,
         coverStyleNote,
         sourceUrl,
+        coverVoiceInput,
       });
     }, 400);
     return () => {
@@ -210,6 +221,7 @@ export function MusicGen() {
     artistName,
     coverStyleNote,
     sourceUrl,
+    coverVoiceInput,
     storageReady,
   ]);
 
@@ -279,6 +291,11 @@ export function MusicGen() {
     setError('');
   };
 
+  const switchCoverVoiceInput = (next: CoverVoiceInput) => {
+    setCoverVoiceInput(next);
+    setError('');
+  };
+
   const setReferencePreview = useCallback((blob: Blob, name: string) => {
     if (referenceUrlRef.current) URL.revokeObjectURL(referenceUrlRef.current);
     referenceUrlRef.current = URL.createObjectURL(blob);
@@ -314,9 +331,6 @@ export function MusicGen() {
     try {
       const blob = await fetchRecordingBlob(clip.id);
       setReferencePreview(blob, clip.displayName);
-      if (mode === 'cover' && vocalStyle === VOCAL_EXAMPLES[0]) {
-        setVocalStyle('贴近参考录音声线, 中文男声');
-      }
       setPickerOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -363,8 +377,13 @@ export function MusicGen() {
         setStatus('error');
         return;
       }
-      if (!referenceBlob) {
-        setError('翻唱：请上传或选择「我的声线」参考录音');
+      if (useVoiceSample && !referenceBlob) {
+        setError('翻唱：请在「声线样本」页签上传或选择本人录音');
+        setStatus('error');
+        return;
+      }
+      if (useVoiceDescribe && !vocalStyle.trim()) {
+        setError('翻唱：请在「声线描述」页签填写音色说明');
         setStatus('error');
         return;
       }
@@ -394,6 +413,11 @@ export function MusicGen() {
         );
       }
 
+      let voiceBase64: string | undefined;
+      if (mode === 'cover' && useVoiceSample && referenceBlob) {
+        voiceBase64 = await readAudioFileAsBase64(referenceBlob, '声线样本');
+      }
+
       let originalBase64: string | undefined;
       if (mode === 'cover' && originalBlob) {
         originalBase64 = await readAudioFileAsBase64(originalBlob, '原曲参考');
@@ -409,11 +433,12 @@ export function MusicGen() {
         artist_name: mode === 'cover' ? artistName : undefined,
         cover_style_note: mode === 'cover' ? coverStyleNote : undefined,
         original_audio_base64: originalBase64,
+        voice_audio_base64: voiceBase64,
         lyrics: mode === 'instrumental' ? undefined : lyrics,
         vocal_style:
           mode === 'vocal'
             ? vocalStyle
-            : mode === 'cover' && voiceStyleActive && vocalStyle.trim()
+            : mode === 'cover' && useVoiceDescribe && vocalStyle.trim()
               ? vocalStyle
               : undefined,
         lyrics_optimizer: mode === 'vocal' ? lyricsOptimizer : undefined,
@@ -421,6 +446,7 @@ export function MusicGen() {
           mode === 'cover'
             ? (step) => {
                 const hints: Record<string, string> = {
+                  preprocess: '正在从你的声线样本提取音色…',
                   fetch: '正在获取原曲参考…',
                   lyrics: '正在生成目标歌词…',
                   generate: '正在用你的声线翻唱原曲（约 1–3 分钟）…',
@@ -546,99 +572,114 @@ export function MusicGen() {
                 </div>
 
                 <div className="rounded-lg border border-border bg-muted/20 p-3">
-                  <label className="mb-1.5 block text-sm font-medium">我的声线（本人录音，6 秒–6 分钟）</label>
-                  <p className="mb-2 text-xs text-muted-foreground">
-                    先上传你的声线样本，再填写下方「声线描述」。仅上传原曲时声线描述不会生效。
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void refreshRecordings();
-                        setPickerOpen(true);
-                      }}
-                      disabled={isWorking}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-sm hover:bg-muted"
-                    >
-                      <FolderOpen size={15} />
-                      从音频采集选择
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={isWorking}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-sm hover:bg-muted"
-                    >
-                      <Upload size={15} />
-                      上传声线样本
-                    </button>
-                    {referenceBlob && (
+                  <label className="mb-2 block text-sm font-medium">翻唱声线（二选一）</label>
+                  <div className="mb-3 grid grid-cols-2 gap-2">
+                    {COVER_VOICE_TABS.map((tab) => (
                       <button
+                        key={tab.value}
                         type="button"
-                        onClick={clearReference}
                         disabled={isWorking}
-                        className="px-3 py-2 text-sm text-muted-foreground hover:bg-muted"
+                        onClick={() => switchCoverVoiceInput(tab.value)}
+                        className={`rounded-lg border px-2 py-2 text-left text-sm transition ${
+                          coverVoiceInput === tab.value
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-border bg-background hover:bg-muted'
+                        }`}
                       >
-                        清除
+                        <span className="block font-medium">{tab.label}</span>
+                        <span className="mt-0.5 block text-[11px] opacity-80">{tab.hint}</span>
                       </button>
-                    )}
+                    ))}
                   </div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="audio/*,.mp3,.wav,.m4a,.flac"
-                    className="hidden"
-                    onChange={onUploadReference}
-                  />
-                  {referenceName && (
-                    <div className="mt-3 rounded-lg border border-border bg-background/60 p-3">
-                      <p className="text-sm font-medium">{referenceName}</p>
-                      {referenceUrl && (
-                        <audio controls src={referenceUrl} className="mt-2 w-full" preload="metadata" />
+
+                  {useVoiceSample && (
+                    <>
+                      <p className="mb-2 text-xs text-muted-foreground">
+                        上传 6 秒–6 分钟的本人录音，系统将提取你的音色参与翻唱（不使用文字描述）。
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void refreshRecordings();
+                            setPickerOpen(true);
+                          }}
+                          disabled={isWorking}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-sm hover:bg-muted"
+                        >
+                          <FolderOpen size={15} />
+                          从音频采集选择
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={isWorking}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-sm hover:bg-muted"
+                        >
+                          <Upload size={15} />
+                          上传声线样本
+                        </button>
+                        {referenceBlob && (
+                          <button
+                            type="button"
+                            onClick={clearReference}
+                            disabled={isWorking}
+                            className="px-3 py-2 text-sm text-muted-foreground hover:bg-muted"
+                          >
+                            清除
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="audio/*,.mp3,.wav,.m4a,.flac"
+                        className="hidden"
+                        onChange={onUploadReference}
+                      />
+                      {referenceName ? (
+                        <div className="mt-3 rounded-lg border border-border bg-background/60 p-3">
+                          <p className="text-sm font-medium">{referenceName}</p>
+                          {referenceUrl && (
+                            <audio controls src={referenceUrl} className="mt-2 w-full" preload="metadata" />
+                          )}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-xs text-muted-foreground">请选择或上传一段本人录音。</p>
                       )}
-                    </div>
+                    </>
                   )}
 
-                  <div className="mt-4 border-t border-border pt-4">
-                    <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-                      <label
-                        className={`text-sm font-medium ${voiceStyleActive ? '' : 'text-muted-foreground'}`}
-                      >
-                        声线描述（写入翻唱风格）
-                      </label>
-                      <div className="flex flex-wrap gap-1">
-                        {VOCAL_EXAMPLES.map((ex) => (
-                          <button
-                            key={ex}
-                            type="button"
-                            disabled={isWorking || !voiceStyleActive}
-                            onClick={() => setVocalStyle(ex)}
-                            className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-40"
-                          >
-                            示例
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <input
-                      value={vocalStyle}
-                      onChange={(e) => setVocalStyle(e.target.value)}
-                      disabled={isWorking || !voiceStyleActive}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                      placeholder={
-                        voiceStyleActive
-                          ? '如：贴近上方声线样本, 略带沙哑男声, 中文'
-                          : '请先上传或选择声线样本'
-                      }
-                    />
-                    {!voiceStyleActive && originalSongBlob && (
-                      <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-500">
-                        {originalSource === 'upload'
-                          ? '已上传原曲文件，请先上传「声线样本」后声线描述才会生效。'
-                          : '已获取原曲，请先上传「声线样本」后填写声线描述。'}
+                  {useVoiceDescribe && (
+                    <>
+                      <p className="mb-2 text-xs text-muted-foreground">
+                        用文字描述目标音色，无需上传录音（本页签下不会使用声线样本）。
                       </p>
-                    )}
-                  </div>
+                      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                        <label className="text-sm font-medium">声线描述（写入翻唱风格）</label>
+                        <div className="flex flex-wrap gap-1">
+                          {VOCAL_EXAMPLES.map((ex) => (
+                            <button
+                              key={ex}
+                              type="button"
+                              disabled={isWorking}
+                              onClick={() => setVocalStyle(ex)}
+                              className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+                            >
+                              示例
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <input
+                        value={vocalStyle}
+                        onChange={(e) => setVocalStyle(e.target.value)}
+                        disabled={isWorking}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        placeholder="如：温暖男声, 略带沙哑, 中文"
+                      />
+                    </>
+                  )}
                 </div>
 
                 <div className="rounded-lg border border-border bg-muted/20 p-3">

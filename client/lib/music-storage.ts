@@ -25,6 +25,8 @@ export type StoredMusicEntry = {
   createdAt: number;
 };
 
+export type CoverVoiceInput = 'sample' | 'describe';
+
 export type MusicDraft = {
   mode: MusicGenMode;
   prompt: string;
@@ -32,6 +34,7 @@ export type MusicDraft = {
   vocalStyle: string;
   lyricsOptimizer: boolean;
   coverUseReferenceLyrics?: boolean;
+  coverVoiceInput?: CoverVoiceInput;
   songTitle?: string;
   artistName?: string;
   coverStyleNote?: string;
@@ -168,6 +171,14 @@ export function loadMusicDraft(): MusicDraft | null {
       vocalStyle: typeof parsed.vocalStyle === 'string' ? parsed.vocalStyle : '',
       lyricsOptimizer: Boolean(parsed.lyricsOptimizer),
       coverUseReferenceLyrics: Boolean(parsed.coverUseReferenceLyrics),
+      coverVoiceInput:
+        parsed.coverVoiceInput === 'sample' || parsed.coverVoiceInput === 'describe'
+          ? parsed.coverVoiceInput
+          : undefined,
+      songTitle: typeof parsed.songTitle === 'string' ? parsed.songTitle : undefined,
+      artistName: typeof parsed.artistName === 'string' ? parsed.artistName : undefined,
+      coverStyleNote: typeof parsed.coverStyleNote === 'string' ? parsed.coverStyleNote : undefined,
+      sourceUrl: typeof parsed.sourceUrl === 'string' ? parsed.sourceUrl : undefined,
     };
   } catch {
     return null;

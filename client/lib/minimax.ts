@@ -559,7 +559,7 @@ export type MusicGenMode = 'vocal' | 'instrumental' | 'cover';
 
 export type MusicModel = 'music-2.6' | 'music-cover';
 
-export type MusicCoverProgressStep = 'fetch' | 'lyrics' | 'generate';
+export type MusicCoverProgressStep = 'preprocess' | 'fetch' | 'lyrics' | 'generate';
 
 export interface MusicGenerationParams {
   mode: MusicGenMode;
@@ -575,6 +575,8 @@ export interface MusicGenerationParams {
   cover_style_note?: string;
   /** 原曲参考音频（搜索/下载/上传），用于 music-cover 保留旋律 */
   original_audio_base64?: string;
+  /** 用户声线样本（与 vocal_style 二选一） */
+  voice_audio_base64?: string;
   onCoverProgress?: (step: MusicCoverProgressStep) => void;
 }
 
@@ -629,6 +631,7 @@ function buildVoiceCoverStylePrompt(
   title?: string,
   voiceStyle?: string,
   note?: string,
+  useUploadedVoiceSample?: boolean,
 ): string {
   const parts = [
     '保留原曲旋律',
@@ -641,11 +644,72 @@ function buildVoiceCoverStylePrompt(
   const t = title?.trim();
   if (a && t) parts.push(`${a}《${t}》经典版`);
   else if (t) parts.push(`《${t}》`);
-  if (voiceStyle?.trim()) parts.push(voiceStyle.trim());
-  else parts.push('贴近用户上传声线');
+  if (voiceStyle?.trim()) {
+    parts.push(voiceStyle.trim());
+  } else if (useUploadedVoiceSample) {
+    parts.push('使用上传声线样本音色');
+  }
   if (note?.trim()) parts.push(note.trim());
   const text = parts.join(', ');
   return text.length >= 10 ? text.slice(0, 300) : `${text}, 流行翻唱`.slice(0, 300);
+}
+
+type CoverPreprocessResult = {
+  cover_feature_id?: string;
+  formatted_lyrics?: string;
+  base_resp?: MiniMaxBaseResp;
+};
+
+async function musicCoverPreprocess(audioBase64: string): Promise<CoverPreprocessResult> {
+  const response = await minimaxFetch(
+    `${miniMaxBaseUrl()}/v1/music_cover_preprocess`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'music-cover',
+        audio_base64: audioBase64,
+      }),
+    },
+    '翻唱预处理',
+  );
+
+  const data = parseJsonBody<CoverPreprocessResult>(await response.text(), '翻唱预处理');
+  assertBaseResp(data, '翻唱预处理');
+  if (!data.cover_feature_id?.trim()) {
+    throw new Error('翻唱预处理：未返回 cover_feature_id');
+  }
+  return data;
+}
+
+async function resolveCoverLyrics(
+  userLyrics: string | undefined,
+  originalAudioBase64: string | undefined,
+  userIntent: string,
+  artistName: string,
+  songTitle: string,
+  onProgress?: (step: MusicCoverProgressStep) => void,
+): Promise<string> {
+  if (userLyrics) {
+    return formatLyricsForSinging(userLyrics);
+  }
+  if (originalAudioBase64) {
+    onProgress?.('preprocess');
+    const origPre = await musicCoverPreprocess(originalAudioBase64);
+    const fromOriginal = origPre.formatted_lyrics?.trim();
+    if (fromOriginal && fromOriginal.length >= 10) {
+      return formatLyricsForSinging(fromOriginal);
+    }
+  }
+  onProgress?.('lyrics');
+  const intent =
+    userIntent ||
+    (artistName && songTitle
+      ? `用我的声音翻唱${artistName}的《${songTitle}》`
+      : songTitle
+        ? `用我的声音翻唱《${songTitle}》`
+        : '');
+  return generateLyricsForCover(intent);
 }
 
 async function generateLyricsForCover(userPrompt: string): Promise<string> {
@@ -738,7 +802,9 @@ export async function generateMusic(params: MusicGenerationParams): Promise<Musi
     const styleNote = params.cover_style_note?.trim() || '';
     const userIntent = params.prompt.trim();
     const originalB64 = params.original_audio_base64?.trim();
+    const voiceB64 = params.voice_audio_base64?.trim();
     const legacyB64 = params.audio_base64?.trim();
+    const voiceStyleText = params.vocal_style?.trim();
 
     if (!songTitle && userIntent.length < 10) {
       throw new Error('翻唱：请填写歌曲名，或填写至少 10 字的翻唱描述');
@@ -749,17 +815,56 @@ export async function generateMusic(params: MusicGenerationParams): Promise<Musi
       throw new Error('翻唱：歌词长度需 10–1000 个字符，或留空从原曲识别/自动生成');
     }
 
-    const audioSetting = payload.audio_setting;
-    const coverPrompt = buildVoiceCoverStylePrompt(
-      artistName,
-      songTitle,
-      params.vocal_style,
-      styleNote || userIntent,
-    );
+    if (!voiceB64 && !voiceStyleText && !legacyB64) {
+      throw new Error('翻唱：请上传声线样本，或填写声线描述（二选一）');
+    }
+    if (voiceB64 && voiceStyleText) {
+      throw new Error('翻唱：已上传声线样本时请勿填写声线描述，二者不可同时使用');
+    }
 
-    // 有原曲参考：music-cover（保留旋律 + 你的声线描述）
+    const audioSetting = payload.audio_setting;
     const referenceB64 = originalB64 || (params.cover_use_reference_lyrics ? legacyB64 : '');
+
     if (referenceB64) {
+      // 已上传声线样本：预处理提取音色，不用文字声线描述
+      if (voiceB64) {
+        params.onCoverProgress?.('preprocess');
+        const voicePre = await musicCoverPreprocess(voiceB64);
+        const finalLyrics = await resolveCoverLyrics(
+          userLyrics,
+          referenceB64,
+          userIntent,
+          artistName,
+          songTitle,
+          params.onCoverProgress,
+        );
+        const coverPrompt = buildVoiceCoverStylePrompt(
+          artistName,
+          songTitle,
+          undefined,
+          styleNote || userIntent,
+          true,
+        );
+        params.onCoverProgress?.('generate');
+        const result = await requestMusicGeneration({
+          model: 'music-cover',
+          cover_feature_id: voicePre.cover_feature_id,
+          lyrics: finalLyrics,
+          prompt: coverPrompt,
+          output_format: 'hex',
+          audio_setting: audioSetting,
+        });
+        return { ...result, resolvedLyrics: finalLyrics, model: 'music-cover' };
+      }
+
+      // 仅文字声线描述：原曲一步翻唱
+      const coverPrompt = buildVoiceCoverStylePrompt(
+        artistName,
+        songTitle,
+        voiceStyleText,
+        styleNote || userIntent,
+        false,
+      );
       params.onCoverProgress?.('generate');
       const coverPayload: Record<string, unknown> = {
         model: 'music-cover',
@@ -779,8 +884,8 @@ export async function generateMusic(params: MusicGenerationParams): Promise<Musi
       };
     }
 
-    if (!params.vocal_style?.trim() && !legacyB64) {
-      throw new Error('翻唱：请上传你的声线参考，或填写声线描述');
+    if (!voiceStyleText && !legacyB64) {
+      throw new Error('翻唱：请先获取原曲，并上传声线样本或填写声线描述');
     }
 
     // 无原曲：music-2.6 按歌名生成（需先搜索原曲或粘贴链接）
